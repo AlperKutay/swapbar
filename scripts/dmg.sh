@@ -30,7 +30,13 @@ if [[ -n "${SIGN_IDENTITY:-}" ]]; then
   codesign --force --timestamp --sign "$SIGN_IDENTITY" "$DMG"
   if [[ -n "${NOTARY_PROFILE:-}" ]]; then
     xcrun notarytool submit "$DMG" --keychain-profile "$NOTARY_PROFILE" --wait
-    xcrun stapler staple "$DMG"
+    # Apple's ticket service drops connections now and then; stapling is safe to retry.
+    for attempt in 1 2 3 4 5; do
+      xcrun stapler staple "$DMG" && break
+      [[ $attempt == 5 ]] && exit 1
+      echo "stapler staple failed (attempt $attempt), retrying in $((attempt * 10))s" >&2
+      sleep $((attempt * 10))
+    done
   fi
 fi
 

@@ -149,8 +149,17 @@ jobs:
           plist_version=$(plutil -extract CFBundleShortVersionString raw "$app/Contents/Info.plist")
           [[ "$plist_version" == "${{ steps.version.outputs.version }}" ]]
           if [[ -n "${NOTARY_PROFILE:-}" ]]; then
-            xcrun stapler validate target/Swapbar.dmg
-            spctl --assess --type open --context context:primary-signature -v target/Swapbar.dmg
+            # Both ask Apple's ticket service, which drops connections now and then.
+            retry() {
+              for attempt in 1 2 3 4 5; do
+                "$@" && return 0
+                echo "::warning::'$*' failed (attempt $attempt), retrying in $((attempt * 10))s"
+                sleep $((attempt * 10))
+              done
+              return 1
+            }
+            retry xcrun stapler validate target/Swapbar.dmg
+            retry spctl --assess --type open --context context:primary-signature -v target/Swapbar.dmg
           fi
           cat target/Swapbar.dmg.sha256
 
