@@ -42,7 +42,9 @@ pub fn apply(theme: Theme) {
     };
     unsafe {
         let appearance: id = match name {
-            Some(n) => msg_send![class!(NSAppearance), appearanceNamed: NSString::alloc(nil).init_str(n)],
+            Some(n) => {
+                msg_send![class!(NSAppearance), appearanceNamed: NSString::alloc(nil).init_str(n)]
+            }
             None => nil,
         };
         let _: () = msg_send![NSApp(), setAppearance: appearance];
