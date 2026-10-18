@@ -14,7 +14,7 @@ use gpui::{
 };
 use std::rc::Rc;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use pricing::PriceBook;
 use settings::{Prefs, TitleMode};
@@ -78,7 +78,24 @@ pub struct Globals {
     pub status: Rc<statusbar::StatusItem>,
     pub window: Option<WindowHandle<ui::Root>>,
     pub settings_window: Option<WindowHandle<settings_ui::SettingsRoot>>,
+    /// Last time the status item toggled the popover (debounces repeated clicks).
+    pub last_toggle: Option<Instant>,
+    /// Last time the popover closed by itself (outside click or losing focus).
+    pub last_dismiss: Option<Instant>,
 }
+
+/// `SWAPBAR_DEBUG` log line prefixed with milliseconds since launch, for click/focus timing.
+pub fn debug_log(msg: std::fmt::Arguments) {
+    static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    if std::env::var("SWAPBAR_DEBUG").is_ok() {
+        let ms = START.get_or_init(Instant::now).elapsed().as_millis();
+        eprintln!("[{ms:>7} ms] {msg}");
+    }
+}
+
+/// Clicks on the status item can make the popover lose focus a moment before the
+/// click itself is handled; within this window a toggle must not reopen it.
+const TOGGLE_GRACE: Duration = Duration::from_millis(300);
 
 impl Global for Globals {}
 
@@ -115,22 +132,43 @@ fn main() {
             let state = cx.new(|_| AppState::new());
             theme::apply(state.read(cx).prefs.theme);
 
+            // AppKit calls these from inside its own event handling, sometimes while gpui
+            // is mid-update. Run them on gpui's next main-thread tick instead of inline,
+            // so they neither re-enter the app nor get dropped.
             let status = Rc::new(statusbar::StatusItem::new(
                 " …",
                 Box::new({
                     let cx = cx.to_async();
                     move || {
-                        let cx = cx.clone();
-                        let _ = cx.update(toggle_window);
+                        let app = cx.clone();
+                        cx.foreground_executor()
+                            .spawn(async move {
+                                let _ = app.update(toggle_window);
+                            })
+                            .detach();
                     }
                 }),
             ));
+            statusbar::set_outside_click_handler(Box::new({
+                let cx = cx.to_async();
+                move || {
+                    debug_log(format_args!("outside click"));
+                    let app = cx.clone();
+                    cx.foreground_executor()
+                        .spawn(async move {
+                            let _ = app.update(dismiss_window);
+                        })
+                        .detach();
+                }
+            }));
 
             cx.set_global(Globals {
                 state,
                 status,
                 window: None,
                 settings_window: None,
+                last_toggle: None,
+                last_dismiss: None,
             });
 
             refresh_accounts(cx);
@@ -427,9 +465,8 @@ pub fn open_settings(cx: &mut App) {
 }
 
 pub fn close_window(cx: &mut App) {
-    if std::env::var("SWAPBAR_DEBUG").is_ok() {
-        eprintln!("close_window");
-    }
+    debug_log(format_args!("close_window"));
+    statusbar::watch_outside_clicks(false);
     let handle = cx.global_mut::<Globals>().window.take();
     if let Some(handle) = handle {
         let _ = handle.update(cx, |_, window, _| window.remove_window());
@@ -437,9 +474,41 @@ pub fn close_window(cx: &mut App) {
     cx.global::<Globals>().status.set_highlighted(false);
 }
 
+/// Close the popover because the user clicked or switched elsewhere.
+pub fn dismiss_window(cx: &mut App) {
+    if cx.global::<Globals>().window.is_none() {
+        return;
+    }
+    // Pressing our own status item can take focus from the popover before its click
+    // action runs; leave the close to that action so a slow click doesn't reopen it.
+    if statusbar::mouse_over_button() {
+        debug_log(format_args!("dismiss skipped: mouse over status item"));
+        return;
+    }
+    cx.global_mut::<Globals>().last_dismiss = Some(Instant::now());
+    close_window(cx);
+}
+
 pub fn toggle_window(cx: &mut App) {
+    let now = Instant::now();
+    let g = cx.global::<Globals>();
+    let recent = |t: Option<Instant>| t.is_some_and(|t| now.duration_since(t) < TOGGLE_GRACE);
+    let (repeated, just_dismissed) = (recent(g.last_toggle), recent(g.last_dismiss));
+    debug_log(format_args!(
+        "toggle_window: open={} repeated={repeated} just_dismissed={just_dismissed}",
+        g.window.is_some()
+    ));
+    if repeated {
+        return;
+    }
+    cx.global_mut::<Globals>().last_toggle = Some(now);
     if cx.global::<Globals>().window.is_some() {
         close_window(cx);
+        return;
+    }
+    // The click that hit the status item also took focus from the open popover,
+    // which already closed it; this click meant "close", not "open again".
+    if just_dismissed {
         return;
     }
     let status = cx.global::<Globals>().status.clone();
@@ -497,6 +566,7 @@ pub fn toggle_window(cx: &mut App) {
         Ok(h) => {
             cx.global_mut::<Globals>().window = Some(h);
             status.set_highlighted(true);
+            statusbar::watch_outside_clicks(true);
             cx.activate(true);
             refresh_accounts(cx);
         }

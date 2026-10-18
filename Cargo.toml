@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+block = "0.1"
 chrono = "0.4.45"
 cocoa = "0.26"
 gpui = { version = "0.2.2", features = ["runtime_shaders"] }

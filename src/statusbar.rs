@@ -1,6 +1,10 @@
 //! NSStatusItem glue (cocoa/objc, the same bindings gpui uses on macOS).
 //! The click handler is a thread-local callback set from the gpui App.
+//! A global mouse monitor reports clicks in other apps so the popover can close
+//! without relying on window activation, which macOS doesn't guarantee for a
+//! Dock-less (accessory) app.
 
+use block::{ConcreteBlock, RcBlock};
 use cocoa::appkit::{
     NSApp, NSApplication, NSApplicationActivationPolicy, NSStatusBar, NSStatusItem,
     NSVariableStatusItemLength,
@@ -10,22 +14,94 @@ use cocoa::foundation::{NSAutoreleasePool, NSPoint, NSRect, NSString};
 use objc::declare::ClassDecl;
 use objc::runtime::{Class, Object, Sel};
 use objc::{class, msg_send, sel, sel_impl};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::sync::Once;
 
 const ICON_2X: &[u8] = include_bytes!("../assets/menubar-36.png");
 
 thread_local! {
     static ON_CLICK: RefCell<Option<Box<dyn Fn()>>> = RefCell::new(None);
+    static ON_OUTSIDE_CLICK: RefCell<Option<Box<dyn Fn()>>> = RefCell::new(None);
+    static OUTSIDE_MONITOR: RefCell<Option<Monitor>> = const { RefCell::new(None) };
+    static BUTTON: Cell<id> = const { Cell::new(nil) };
 }
+
+/// An installed global monitor and the block it calls (kept alive while installed).
+type Monitor = (id, RcBlock<(id,), ()>);
+
+// NSEventMaskLeftMouseDown | NSEventMaskRightMouseDown | NSEventMaskOtherMouseDown
+const MOUSE_DOWN_MASK: u64 = (1 << 1) | (1 << 3) | (1 << 25);
 
 static REGISTER: Once = Once::new();
 static mut TARGET_CLASS: *const Class = std::ptr::null();
 
 extern "C" fn clicked(_this: &Object, _sel: Sel, _sender: id) {
+    crate::debug_log(format_args!("status item clicked"));
     ON_CLICK.with(|cb| {
         if let Some(f) = cb.borrow().as_ref() {
             f();
+        }
+    });
+}
+
+/// Called for mouse-down events in other apps while [`watch_outside_clicks`] is on.
+pub fn set_outside_click_handler(f: Box<dyn Fn()>) {
+    ON_OUTSIDE_CLICK.with(|cb| *cb.borrow_mut() = Some(f));
+}
+
+/// Whether the mouse is over our status item. On recent macOS the menu bar extras are
+/// drawn by another process, so a click on our own icon also reaches the global monitor;
+/// the button's action handles that click instead.
+pub fn mouse_over_button() -> bool {
+    let button = BUTTON.with(Cell::get);
+    if button == nil {
+        return false;
+    }
+    unsafe {
+        let window: id = msg_send![button, window];
+        if window == nil {
+            return false;
+        }
+        let f: NSRect = msg_send![window, frame];
+        let p: NSPoint = msg_send![class!(NSEvent), mouseLocation];
+        p.x >= f.origin.x
+            && p.x <= f.origin.x + f.size.width
+            && p.y >= f.origin.y
+            && p.y <= f.origin.y + f.size.height
+    }
+}
+
+/// Install or remove the global mouse-down monitor (clicks in other apps).
+pub fn watch_outside_clicks(on: bool) {
+    OUTSIDE_MONITOR.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        if on == slot.is_some() {
+            return;
+        }
+        unsafe {
+            if let Some((monitor, _block)) = slot.take() {
+                let _: () = msg_send![class!(NSEvent), removeMonitor: monitor];
+                let _: () = msg_send![monitor, release];
+                return;
+            }
+            let block = ConcreteBlock::new(|_event: id| {
+                if mouse_over_button() {
+                    return;
+                }
+                ON_OUTSIDE_CLICK.with(|cb| {
+                    if let Some(f) = cb.borrow().as_ref() {
+                        f();
+                    }
+                });
+            })
+            .copy();
+            let monitor: id = msg_send![class!(NSEvent),
+                addGlobalMonitorForEventsMatchingMask: MOUSE_DOWN_MASK
+                handler: &*block];
+            if monitor != nil {
+                let _: () = msg_send![monitor, retain];
+                *slot = Some((monitor, block));
+            }
         }
     });
 }
@@ -73,6 +149,7 @@ impl StatusItem {
             let _: () = msg_send![item, retain];
             let target: id = msg_send![target_class(), new];
             let button: id = item.button();
+            BUTTON.with(|b| b.set(button));
             // Template image: macOS tints it for light/dark menu bars.
             let data: id =
                 msg_send![class!(NSData), dataWithBytes: ICON_2X.as_ptr() length: ICON_2X.len()];

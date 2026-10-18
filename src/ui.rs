@@ -94,15 +94,17 @@ impl Root {
         subs.push(cx.observe(&state, |_, _, cx| cx.notify()));
         subs.push(cx.observe_window_appearance(window, |_, _, cx| cx.notify()));
         subs.push(cx.observe_window_activation(window, |this, window, cx| {
+            crate::debug_log(format_args!("popover active={}", window.is_window_active()));
             if window.is_window_active() {
                 this.was_active = true;
             } else if this.was_active {
-                cx.defer(crate::close_window);
+                cx.defer(crate::dismiss_window);
             }
         }));
         cx.on_release(|_, cx| {
             cx.global_mut::<Globals>().window = None;
             cx.global::<Globals>().status.set_highlighted(false);
+            crate::statusbar::watch_outside_clicks(false);
         })
         .detach();
         Root {
