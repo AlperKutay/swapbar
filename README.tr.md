@@ -61,7 +61,7 @@ Popover'daki **Settings…** ile açılır. Tercihler `~/.config/swapbar/setting
 
 Swapbar `cswap`'ı `~/.local/bin/cswap`, `/opt/homebrew/bin/cswap` ve `/usr/local/bin/cswap` konumlarında arar. Başka bir yol için `CSWAP_BIN` tanımlayın.
 
-Sürüm notarize edilmemişse macOS ilk açılışı engeller. Applications'ta Swapbar'a sağ tıklayıp **Aç**'ı seçin ya da Sistem Ayarları → Gizlilik ve Güvenlik altından izin verin.
+0.1.1 ve sonraki sürümler Developer ID ile imzalı ve Apple tarafından notarize edilmiştir; Swapbar çift tıklayınca açılır. 0.1.0 öyle değildir: macOS ilk açılışı engeller, Sistem Ayarları → Gizlilik ve Güvenlik altındaki **Yine de Aç** ile izin verirsiniz.
 
 Girişte başlatmak için Ayarlar'da **Launch at login** seçeneğini açın.
 

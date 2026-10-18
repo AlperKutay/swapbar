@@ -61,7 +61,7 @@ Open **Settings…** from the popover. Preferences are stored in `~/.config/swap
 
 Swapbar looks for `cswap` at `~/.local/bin/cswap`, `/opt/homebrew/bin/cswap` and `/usr/local/bin/cswap`. Set `CSWAP_BIN` to use another path.
 
-If a build is not notarized, macOS blocks the first launch. Right-click Swapbar in Applications and choose **Open**, or allow it under System Settings → Privacy & Security.
+Releases from 0.1.1 on are signed with a Developer ID and notarized by Apple, so Swapbar opens with a double-click. Version 0.1.0 is not: macOS blocks its first launch, and you allow it with **Open Anyway** under System Settings → Privacy & Security.
 
 To launch at login, turn on **Launch at login** in Settings.
 
