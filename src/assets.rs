@@ -31,6 +31,7 @@ icons!(
     "instagram",
     "coins",
     "rocket",
+    "bell",
     "logomark"
 );
 

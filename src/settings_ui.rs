@@ -8,7 +8,7 @@ use gpui::{
 use crate::assets::icon;
 use crate::cswap::ConfigList;
 use crate::settings::{PercentMode, Prefs, Theme, TitleMode};
-use crate::{APP_NAME, APP_VERSION, AppState, Globals};
+use crate::{APP_NAME, APP_VERSION, AppState, Globals, hotkey, notify};
 
 const UI_FONT: &str = ".AppleSystemUIFont";
 
@@ -77,15 +77,17 @@ fn t() -> &'static T {
 enum Page {
     General,
     MenuBar,
+    Notifications,
     Accounts,
     AutoSwitch,
     About,
 }
 
 impl Page {
-    const ALL: [Page; 5] = [
+    const ALL: [Page; 6] = [
         Page::General,
         Page::MenuBar,
+        Page::Notifications,
         Page::Accounts,
         Page::AutoSwitch,
         Page::About,
@@ -94,6 +96,7 @@ impl Page {
         match self {
             Page::General => "General",
             Page::MenuBar => "Menu Bar",
+            Page::Notifications => "Notifications",
             Page::Accounts => "Accounts",
             Page::AutoSwitch => "Auto-switch",
             Page::About => "About",
@@ -103,6 +106,7 @@ impl Page {
         match self {
             Page::General => "settings",
             Page::MenuBar => "laptop",
+            Page::Notifications => "bell",
             Page::Accounts => "users",
             Page::AutoSwitch => "swap",
             Page::About => "info",
@@ -129,6 +133,7 @@ impl SettingsRoot {
         .detach();
         let page = match std::env::var("SWAPBAR_PAGE").as_deref() {
             Ok("menubar") => Page::MenuBar,
+            Ok("notifications") => Page::Notifications,
             Ok("accounts") => Page::Accounts,
             Ok("auto") => Page::AutoSwitch,
             Ok("about") => Page::About,
@@ -476,6 +481,133 @@ fn page_general(s: &AppState) -> impl IntoElement {
             Some("Today / 30-day totals under the account list."),
             toggle("show-usage", p.show_usage, |on, cx| crate::update_prefs(cx, |p| p.show_usage = on)),
         )]))
+        .child(heading("Keyboard shortcuts"))
+        .child(group(vec![
+            row(
+                "Global shortcuts",
+                Some("Work from any app. Turn off if another app needs these keys."),
+                toggle("hotkeys", p.hotkeys, |on, cx| crate::update_prefs(cx, |p| p.hotkeys = on)),
+            ),
+            row("Open Swapbar", None, shortcut(hotkey::TOGGLE_LABEL, p.hotkeys)),
+            row(
+                "Switch to the account with the most quota left",
+                None,
+                shortcut(hotkey::SWITCH_BEST_LABEL, p.hotkeys),
+            ),
+        ]))
+        .child(heading("Updates"))
+        .child(group(vec![
+            row(
+                "Check for updates automatically",
+                Some("Looks for a new release on GitHub at launch and every 6 hours."),
+                toggle("check-updates", p.check_updates, |on, cx| {
+                    crate::update_prefs(cx, |p| p.check_updates = on);
+                    if on {
+                        crate::check_for_updates(cx, false);
+                    }
+                }),
+            ),
+            update_row(s),
+        ]))
+}
+
+fn shortcut(keys: &str, enabled: bool) -> impl IntoElement {
+    div()
+        .px_2()
+        .py(px(2.0))
+        .rounded(px(5.0))
+        .border_1()
+        .border_color(c(t().hairline))
+        .bg(c(t().content))
+        .text_size(px(12.0))
+        .text_color(c(if enabled { t().text } else { t().tertiary }))
+        .child(keys.to_string())
+}
+
+fn update_row(s: &AppState) -> gpui::AnyElement {
+    let status = if s.update_checking {
+        "Checking…".to_string()
+    } else if let Some(m) = &s.update_message {
+        m.clone()
+    } else {
+        format!("You have version {APP_VERSION}.")
+    };
+    let control: gpui::AnyElement = match &s.update {
+        Some(r) => {
+            let url = r.url.clone();
+            button(
+                "download-update",
+                &format!("Download {}", r.version),
+                false,
+                move |cx| cx.open_url(&url),
+            )
+            .into_any_element()
+        }
+        None => button("check-update", "Check now", false, |cx| {
+            crate::check_for_updates(cx, true)
+        })
+        .into_any_element(),
+    };
+    row("Latest version", Some(&status), control)
+}
+
+fn page_notifications(s: &AppState) -> impl IntoElement {
+    let p = &s.prefs;
+    let mut col = div().flex().flex_col();
+    if !notify::available() {
+        col = col.child(
+            div()
+                .text_size(px(11.0))
+                .text_color(c(t().danger))
+                .mt_3()
+                .child("Notifications need Swapbar to run from its app bundle (Swapbar.app)."),
+        );
+    }
+    col.child(heading("Quota"))
+        .child(group(vec![
+            row(
+                "Low quota at",
+                Some("A window counts as low at this much left. Swapbar then suggests the account with the most room."),
+                stepper("low-pct", format!("{}%", p.low_quota_pct), |d, cx| {
+                    crate::update_prefs(cx, |p| p.low_quota_pct = (p.low_quota_pct as i64 + d * 5).clamp(5, 50) as u32)
+                }),
+            ),
+            row(
+                "When the current account runs low",
+                Some("Once per 5h or 7d window, with a Switch button for the best other account."),
+                toggle("notify-low", p.notify_low, |on, cx| {
+                    crate::update_prefs(cx, |p| p.notify_low = on);
+                    if on {
+                        notify::request_authorization();
+                    }
+                }),
+            ),
+            row(
+                "When an account's quota resets",
+                Some("For accounts that had run low. Paused and hidden accounts are skipped."),
+                toggle("notify-reset", p.notify_reset, |on, cx| {
+                    crate::update_prefs(cx, |p| p.notify_reset = on);
+                    if on {
+                        notify::request_authorization();
+                    }
+                }),
+            ),
+        ]))
+        .child(heading("System"))
+        .child(group(vec![
+            row(
+                "Send a test notification",
+                Some("If nothing appears, allow Swapbar in System Settings › Notifications."),
+                div()
+                    .flex()
+                    .gap_2()
+                    .child(button("test-notify", "Send test", false, |_| {
+                        notify::request_authorization();
+                        notify::post("test", "Swapbar notifications are on", "You'll hear from Swapbar when quota runs low or resets.", None);
+                    }))
+                    .child(button("open-notify-settings", "Open System Settings", false, |_| notify::open_system_settings())),
+            ),
+        ]))
 }
 
 fn page_menubar(s: &AppState) -> impl IntoElement {
@@ -841,6 +973,7 @@ impl Render for SettingsRoot {
         let content: gpui::AnyElement = match page {
             Page::General => page_general(&s).into_any_element(),
             Page::MenuBar => page_menubar(&s).into_any_element(),
+            Page::Notifications => page_notifications(&s).into_any_element(),
             Page::Accounts => page_accounts(&s).into_any_element(),
             Page::AutoSwitch => page_autoswitch(&s).into_any_element(),
             Page::About => page_about().into_any_element(),

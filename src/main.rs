@@ -1,11 +1,15 @@
+mod advice;
 mod assets;
 mod cswap;
+mod hotkey;
+mod notify;
 mod pricing;
 mod settings;
 mod settings_ui;
 mod statusbar;
 mod theme;
 mod ui;
+mod update;
 mod usage;
 
 use gpui::{
@@ -41,6 +45,11 @@ pub struct AppState {
     pub cswap_config: Option<cswap::ConfigList>,
     pub config_error: Option<String>,
     pub config_busy: bool,
+    /// A newer release, once an update check has found one.
+    pub update: Option<update::Release>,
+    pub update_checking: bool,
+    /// Result of the last check the user started from Settings.
+    pub update_message: Option<String>,
 }
 
 impl AppState {
@@ -60,6 +69,9 @@ impl AppState {
             cswap_config: None,
             config_error: None,
             config_busy: false,
+            update: None,
+            update_checking: false,
+            update_message: None,
         }
     }
 
@@ -82,6 +94,8 @@ pub struct Globals {
     pub last_toggle: Option<Instant>,
     /// Last time the popover closed by itself (outside click or losing focus).
     pub last_dismiss: Option<Instant>,
+    /// Quota readings from the previous poll, for notifications.
+    pub watch: advice::Watch,
 }
 
 /// `SWAPBAR_DEBUG` log line prefixed with milliseconds since launch, for click/focus timing.
@@ -163,13 +177,48 @@ fn main() {
             }));
 
             cx.set_global(Globals {
-                state,
+                state: state.clone(),
                 status,
                 window: None,
                 settings_window: None,
                 last_toggle: None,
                 last_dismiss: None,
+                watch: advice::Watch::default(),
             });
+
+            notify::init(Box::new({
+                let cx = cx.to_async();
+                move |action| {
+                    let app = cx.clone();
+                    cx.foreground_executor()
+                        .spawn(async move {
+                            let _ = app.update(|cx| match action {
+                                notify::Action::Open => open_popover(cx),
+                                notify::Action::Switch(n) => switch_account(cx, n),
+                            });
+                        })
+                        .detach();
+                }
+            }));
+            let prefs = state.read(cx).prefs.clone();
+            if prefs.notify_low || prefs.notify_reset {
+                notify::request_authorization();
+            }
+            hotkey::set_handler(Box::new({
+                let cx = cx.to_async();
+                move |key| {
+                    let app = cx.clone();
+                    cx.foreground_executor()
+                        .spawn(async move {
+                            let _ = app.update(|cx| match key {
+                                hotkey::Hotkey::Toggle => toggle_window(cx),
+                                hotkey::Hotkey::SwitchBest => switch_to_best(cx),
+                            });
+                        })
+                        .detach();
+                }
+            }));
+            hotkey::set_enabled(prefs.hotkeys);
 
             refresh_accounts(cx);
             refresh_usage(cx);
@@ -183,11 +232,7 @@ fn main() {
                     cx.background_executor()
                         .timer(Duration::from_millis(400))
                         .await;
-                    let _ = cx.update(|cx| {
-                        if cx.global::<Globals>().window.is_none() {
-                            toggle_window(cx)
-                        }
-                    });
+                    let _ = cx.update(open_popover);
                 })
                 .detach();
             }
@@ -229,6 +274,20 @@ fn main() {
                 }
             })
             .detach();
+            cx.spawn(async move |cx: &mut AsyncApp| {
+                cx.background_executor()
+                    .timer(Duration::from_secs(10))
+                    .await;
+                loop {
+                    let _ = cx.update(|cx| {
+                        if cx.global::<Globals>().state.read(cx).prefs.check_updates {
+                            check_for_updates(cx, false);
+                        }
+                    });
+                    cx.background_executor().timer(UPDATE_CHECK_INTERVAL).await;
+                }
+            })
+            .detach();
         });
 }
 
@@ -258,7 +317,117 @@ pub fn refresh_accounts(cx: &mut App) {
             }
             cx.notify();
         });
-        let _ = cx.update(update_title);
+        let _ = cx.update(|cx| {
+            update_title(cx);
+            notify_quota_changes(cx);
+        });
+    })
+    .detach();
+}
+
+/// Post notifications for quota changes since the previous poll.
+fn notify_quota_changes(cx: &mut App) {
+    let state = cx.global::<Globals>().state.read(cx);
+    let Some(list) = state.accounts.clone() else {
+        return;
+    };
+    let prefs = state.prefs.clone();
+    let events = cx.global_mut::<Globals>().watch.update(&list, &prefs);
+    for e in events {
+        match e {
+            advice::Event::Low {
+                email,
+                window,
+                left,
+                suggestion,
+            } => {
+                let title = format!("{window} quota low: {left:.0}% left");
+                let (body, target) = match suggestion {
+                    Some(s) => (
+                        format!(
+                            "{email} is running out. {} has {:.0}% left.",
+                            s.email, s.headroom
+                        ),
+                        Some(s.number),
+                    ),
+                    None => (format!("{email} is running out."), None),
+                };
+                notify::post(&format!("low-{window}"), &title, &body, target);
+            }
+            advice::Event::Reset {
+                number,
+                email,
+                window,
+                left,
+            } => {
+                let active = list.active_account_number == Some(number);
+                notify::post(
+                    &format!("reset-{number}-{window}"),
+                    "Quota available again",
+                    &format!("{email}: the {window} window reset, {left:.0}% left."),
+                    (!active).then_some(number),
+                );
+            }
+        }
+    }
+}
+
+/// Switch to the account with the most quota left (the global shortcut).
+pub fn switch_to_best(cx: &mut App) {
+    let state = cx.global::<Globals>().state.read(cx);
+    let best = state
+        .accounts
+        .as_ref()
+        .and_then(|l| advice::best_other(l, &state.prefs))
+        .map(|(a, _)| a.number);
+    match best {
+        Some(number) => switch_account(cx, number),
+        // nothing to switch to: show the accounts instead
+        None => open_popover(cx),
+    }
+}
+
+const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
+
+/// Look for a newer release. `manual` checks report their outcome in Settings.
+pub fn check_for_updates(cx: &mut App, manual: bool) {
+    let state = cx.global::<Globals>().state.clone();
+    if state.read(cx).update_checking {
+        return;
+    }
+    state.update(cx, |s, cx| {
+        s.update_checking = true;
+        if manual {
+            s.update_message = None;
+        }
+        cx.notify();
+    });
+    cx.spawn(async move |cx: &mut AsyncApp| {
+        let result = cx
+            .background_executor()
+            .spawn(async { update::check(APP_VERSION) })
+            .await;
+        let _ = state.update(cx, |s, cx| {
+            s.update_checking = false;
+            match result {
+                Ok(found) => {
+                    if manual {
+                        s.update_message = Some(match &found {
+                            Some(r) => format!("Version {} is available.", r.version),
+                            None => format!("{APP_NAME} {APP_VERSION} is the latest version."),
+                        });
+                    }
+                    s.update = found;
+                }
+                Err(e) => {
+                    debug_log(format_args!("update check failed: {e}"));
+                    if manual {
+                        s.update_message = Some(format!("Could not check for updates: {e}"));
+                    }
+                }
+            }
+            cx.notify();
+        });
     })
     .detach();
 }
@@ -277,6 +446,7 @@ pub fn switch_account(cx: &mut App, number: u32) {
             .background_executor()
             .spawn(async move { cswap::switch(number) })
             .await;
+        let ok = result.is_ok();
         let _ = state.update(cx, |s, cx| {
             s.switching = None;
             if let Err(e) = result {
@@ -284,7 +454,25 @@ pub fn switch_account(cx: &mut App, number: u32) {
             }
             cx.notify();
         });
-        let _ = cx.update(refresh_accounts);
+        let _ = cx.update(|cx| {
+            // a switch from a shortcut or a notification has no popover to show it
+            if ok && cx.global::<Globals>().window.is_none() {
+                let target = state
+                    .read(cx)
+                    .accounts
+                    .as_ref()
+                    .and_then(|l| l.accounts.iter().find(|a| a.number == number))
+                    .map(|a| (a.email.clone(), advice::headroom(a)));
+                if let Some((email, left)) = target {
+                    let body = match left {
+                        Some(h) => format!("{h:.0}% quota left."),
+                        None => "Quota not known yet.".to_string(),
+                    };
+                    notify::post("switched", &format!("Switched to {email}"), &body, None);
+                }
+            }
+            refresh_accounts(cx);
+        });
     })
     .detach();
 }
@@ -351,7 +539,9 @@ pub fn update_prefs(cx: &mut App, f: impl FnOnce(&mut Prefs)) {
         s.prefs.save();
         cx.notify();
     });
-    theme::apply(state.read(cx).prefs.theme);
+    let prefs = state.read(cx).prefs.clone();
+    theme::apply(prefs.theme);
+    hotkey::set_enabled(prefs.hotkeys);
     update_title(cx);
 }
 
@@ -487,6 +677,13 @@ pub fn dismiss_window(cx: &mut App) {
     }
     cx.global_mut::<Globals>().last_dismiss = Some(Instant::now());
     close_window(cx);
+}
+
+/// Open the popover if it isn't showing.
+pub fn open_popover(cx: &mut App) {
+    if cx.global::<Globals>().window.is_none() {
+        toggle_window(cx);
+    }
 }
 
 pub fn toggle_window(cx: &mut App) {

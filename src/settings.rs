@@ -86,6 +86,12 @@ pub struct Prefs {
     pub accounts_refresh_secs: u64,
     pub usage_refresh_secs: u64,
     pub launch_at_login: bool,
+    /// Remaining percentage at which a window counts as low (notifications, switch suggestion).
+    pub low_quota_pct: u32,
+    pub notify_low: bool,
+    pub notify_reset: bool,
+    pub check_updates: bool,
+    pub hotkeys: bool,
 }
 
 impl Default for Prefs {
@@ -102,6 +108,11 @@ impl Default for Prefs {
             accounts_refresh_secs: 60,
             usage_refresh_secs: 120,
             launch_at_login: false,
+            low_quota_pct: 15,
+            notify_low: true,
+            notify_reset: true,
+            check_updates: true,
+            hotkeys: true,
         }
     }
 }

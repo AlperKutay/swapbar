@@ -3,9 +3,11 @@ use gpui::{
     Styled, Subscription, Window, div, prelude::*, px, relative, rgb,
 };
 
+use crate::advice::{self, Suggestion};
 use crate::assets::icon;
 use crate::cswap::{Account, Window as UsageWindow};
 use crate::settings::{PercentMode, Prefs};
+use crate::update::Release;
 use crate::usage::{Summary, format_tokens, format_usd};
 use crate::{AppState, Globals};
 
@@ -238,12 +240,101 @@ fn quota_row(label: &str, w: Option<&UsageWindow>, prefs: &Prefs) -> impl IntoEl
         )
 }
 
+// ---------- banners ----------
+
+fn banner(
+    id: &'static str,
+    glyph: &str,
+    title: String,
+    detail: String,
+    action: &str,
+    on_click: impl Fn(&mut App) + 'static,
+) -> impl IntoElement {
+    div().px_3().pt_3().child(
+        div()
+            .flex()
+            .items_center()
+            .gap_2p5()
+            .px_3()
+            .py_2()
+            .rounded_md()
+            .bg(c(t().hover))
+            .border_1()
+            .border_color(c(t().hairline))
+            .child(icon(glyph, 14.0, c(t().accent)))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_w_0()
+                    .child(
+                        div()
+                            .text_size(px(12.0))
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(c(t().text))
+                            .child(title),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(11.0))
+                            .text_color(c(t().secondary))
+                            .overflow_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .child(detail),
+                    ),
+            )
+            .child(
+                div()
+                    .id(id)
+                    .flex_shrink_0()
+                    .px_2p5()
+                    .py(px(3.0))
+                    .rounded(px(5.0))
+                    .bg(c(t().accent))
+                    .cursor_pointer()
+                    .hover(|d| d.opacity(0.85))
+                    .text_size(px(11.5))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(c(0xffffff))
+                    .child(action.to_string())
+                    .on_click(move |_, _, cx| on_click(cx)),
+            ),
+    )
+}
+
+fn suggestion_banner(s: &Suggestion) -> impl IntoElement {
+    let number = s.number;
+    banner(
+        "suggest-switch",
+        "swap",
+        format!("Current account has {:.0}% left", s.current_headroom),
+        format!("{} has {:.0}% left", s.email, s.headroom),
+        "Switch",
+        move |cx| crate::switch_account(cx, number),
+    )
+}
+
+fn update_banner(r: &Release) -> impl IntoElement {
+    let url = r.url.clone();
+    banner(
+        "update",
+        "rocket",
+        format!("{} {} is available", crate::APP_NAME, r.version),
+        format!("You have {}", crate::APP_VERSION),
+        "Download",
+        move |cx| cx.open_url(&url),
+    )
+}
+
 // ---------- accounts ----------
 
 fn account_row(
     acc: &Account,
     prefs: &Prefs,
     switching: Option<u32>,
+    suggested: bool,
     is_last: bool,
     cx: &mut Context<Root>,
 ) -> impl IntoElement {
@@ -260,6 +351,8 @@ fn account_row(
         ("current".into(), t().accent)
     } else if acc.disabled {
         ("paused".into(), t().tertiary)
+    } else if suggested {
+        ("suggested".into(), t().ok)
     } else {
         (String::new(), t().tertiary)
     };
@@ -377,7 +470,11 @@ fn account_row(
         }))
 }
 
-fn accounts_section(state: &AppState, cx: &mut Context<Root>) -> impl IntoElement {
+fn accounts_section(
+    state: &AppState,
+    suggested: Option<u32>,
+    cx: &mut Context<Root>,
+) -> impl IntoElement {
     let fresh = state
         .accounts
         .as_ref()
@@ -428,7 +525,14 @@ fn accounts_section(state: &AppState, cx: &mut Context<Root>) -> impl IntoElemen
                 );
             }
             for (i, acc) in visible.iter().enumerate() {
-                col = col.child(account_row(acc, prefs, state.switching, i + 1 == n, cx));
+                col = col.child(account_row(
+                    acc,
+                    prefs,
+                    state.switching,
+                    suggested == Some(acc.number),
+                    i + 1 == n,
+                    cx,
+                ));
             }
         }
         (None, Some(err)) => {
@@ -739,11 +843,22 @@ impl Render for Root {
         let busy = s.accounts_loading || s.usage_scanning || s.switching.is_some();
 
         let show_usage = s.prefs.show_usage;
+        let suggestion = s
+            .accounts
+            .as_ref()
+            .and_then(|l| advice::suggestion(l, &s.prefs))
+            .filter(|_| s.switching.is_none());
         let body = div()
             .id("body")
             .flex_1()
             .overflow_y_scroll()
-            .child(accounts_section(&s, cx))
+            .when_some(s.update.as_ref(), |d, r| d.child(update_banner(r)))
+            .when_some(suggestion.as_ref(), |d, sg| d.child(suggestion_banner(sg)))
+            .child(accounts_section(
+                &s,
+                suggestion.as_ref().map(|sg| sg.number),
+                cx,
+            ))
             .when(show_usage, |d| {
                 d.child(div().px_4().py_1().child(hairline()))
                     .child(usage_section(&s))
