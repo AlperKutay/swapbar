@@ -659,7 +659,17 @@ pub fn close_window(cx: &mut App) {
     statusbar::watch_outside_clicks(false);
     let handle = cx.global_mut::<Globals>().window.take();
     if let Some(handle) = handle {
-        let _ = handle.update(cx, |_, window, _| window.remove_window());
+        // Called from one of the popover's own handlers (Settings…), the window is mid-update
+        // and gpui refuses the nested update; remove it once that update has finished,
+        // otherwise it stays on screen with nothing left that can close it.
+        if handle
+            .update(cx, |_, window, _| window.remove_window())
+            .is_err()
+        {
+            cx.defer(move |cx| {
+                let _ = handle.update(cx, |_, window, _| window.remove_window());
+            });
+        }
     }
     cx.global::<Globals>().status.set_highlighted(false);
 }
