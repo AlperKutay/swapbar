@@ -13,6 +13,7 @@ use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use crate::attribution::{self, Attribution, Owner, Source};
 use crate::pricing::{PriceBook, Rate};
 
 const LOOKBACK_DAYS: i64 = 31;
@@ -25,8 +26,9 @@ pub fn data_dir() -> PathBuf {
 
 /// Every Claude Code `projects` directory we know about: the default
 /// profile, `CLAUDE_CONFIG_DIR`, sibling profiles (`~/.claude-*`) and
-/// claude-swap session profiles. Deduped by canonical path.
-fn claude_projects_dirs() -> Vec<PathBuf> {
+/// claude-swap session profiles. Deduped by canonical path, each with the
+/// source that decides which account its records count for.
+fn claude_projects_dirs() -> Vec<(PathBuf, Source)> {
     let home = PathBuf::from(std::env::var("HOME").unwrap_or_default());
     let mut candidates: Vec<PathBuf> = Vec::new();
     if let Ok(cfg) = std::env::var("CLAUDE_CONFIG_DIR") {
@@ -55,7 +57,8 @@ fn claude_projects_dirs() -> Vec<PathBuf> {
         }
         let canon = fs::canonicalize(&c).unwrap_or(c.clone());
         if seen.insert(canon) {
-            out.push(c);
+            let source = attribution::source_for(c.parent().unwrap_or(&c), &home);
+            out.push((c, source));
         }
     }
     out
@@ -78,6 +81,9 @@ pub struct Rec {
     /// incomplete streaming row (no cost)
     #[serde(default)]
     pub inc: bool,
+    /// account the usage counts for; worked out on every scan, not cached
+    #[serde(skip)]
+    pub owner: Owner,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -226,6 +232,7 @@ fn parse_line(line: &str, min_ts: i64) -> Option<Rec> {
         c1,
         o: usage.output_tokens,
         inc: incomplete,
+        owner: Owner::Unknown,
     })
 }
 
@@ -299,10 +306,16 @@ pub fn collect_records() -> Vec<Rec> {
     let cache = guard.get_or_insert_with(Cache::load);
 
     let mut files = Vec::new();
-    for d in claude_projects_dirs() {
+    let mut sources: HashMap<String, Source> = HashMap::new();
+    for (d, source) in claude_projects_dirs() {
+        let first = files.len();
         walk(&d, &mut files, min_ts - 36 * 3600);
+        for f in &files[first..] {
+            sources.insert(f.to_string_lossy().to_string(), source.clone());
+        }
     }
     files.sort();
+    let owners = Attribution::load();
     if std::env::var("SWAPBAR_DEBUG").is_ok() {
         eprintln!("jsonl files in window: {}", files.len());
     }
@@ -377,20 +390,25 @@ pub fn collect_records() -> Vec<Rec> {
     // Cross-file dedup: files in sorted path order, first complete row wins.
     let mut out: Vec<Rec> = Vec::new();
     let mut index: HashMap<u64, usize> = HashMap::new();
-    for entry in cache.files.values() {
+    for (path, entry) in &cache.files {
+        let source = sources.get(path).unwrap_or(&Source::Default);
         for r in &entry.recs {
             if r.t < min_ts {
                 continue;
             }
+            let with_owner = || Rec {
+                owner: owners.owner(source, r.t),
+                ..r.clone()
+            };
             match index.get(&r.k) {
                 Some(&i) => {
                     if out[i].inc && !r.inc {
-                        out[i] = r.clone();
+                        out[i] = with_owner();
                     }
                 }
                 None => {
                     index.insert(r.k, out.len());
-                    out.push(r.clone());
+                    out.push(with_owner());
                 }
             }
         }
@@ -477,6 +495,8 @@ pub struct Summary {
     pub by_model: Vec<(String, Totals)>,
     /// newest first
     pub by_day: Vec<(NaiveDate, Totals)>,
+    /// sorted by cost desc
+    pub by_account: Vec<(Owner, Totals)>,
 }
 
 pub fn summarize(recs: &[Rec], period: Period, prices: &PriceBook) -> Summary {
@@ -484,6 +504,7 @@ pub fn summarize(recs: &[Rec], period: Period, prices: &PriceBook) -> Summary {
     let mut total = Totals::default();
     let mut by_model: HashMap<String, Totals> = HashMap::new();
     let mut by_day: BTreeMap<NaiveDate, Totals> = BTreeMap::new();
+    let mut by_account: HashMap<&Owner, Totals> = HashMap::new();
     // Price and group by raw model id (one lookup per distinct id), normalize names afterwards.
     let mut by_raw: HashMap<&str, (Option<Rate>, Totals)> = HashMap::new();
     for r in recs {
@@ -506,6 +527,7 @@ pub fn summarize(recs: &[Rec], period: Period, prices: &PriceBook) -> Summary {
             .map(|d| d.date_naive())
             .unwrap_or_default();
         by_day.entry(day).or_default().add(r, cost);
+        by_account.entry(&r.owner).or_default().add(r, cost);
     }
     for (raw, (_, t)) in by_raw {
         by_model
@@ -513,18 +535,25 @@ pub fn summarize(recs: &[Rec], period: Period, prices: &PriceBook) -> Summary {
             .or_default()
             .merge(&t);
     }
-    let mut by_model: Vec<_> = by_model.into_iter().collect();
-    by_model.sort_by(|a, b| {
-        b.1.cost
-            .partial_cmp(&a.1.cost)
+    let by_cost = |a: &Totals, b: &Totals| {
+        b.cost
+            .partial_cmp(&a.cost)
             .unwrap_or(std::cmp::Ordering::Equal)
-            .then(b.1.tokens().cmp(&a.1.tokens()))
-    });
+            .then(b.tokens().cmp(&a.tokens()))
+    };
+    let mut by_model: Vec<_> = by_model.into_iter().collect();
+    by_model.sort_by(|a, b| by_cost(&a.1, &b.1).then(a.0.cmp(&b.0)));
+    let mut by_account: Vec<_> = by_account
+        .into_iter()
+        .map(|(o, t)| (o.clone(), t))
+        .collect();
+    by_account.sort_by(|a, b| by_cost(&a.1, &b.1).then(a.0.label().cmp(b.0.label())));
     let by_day: Vec<_> = by_day.into_iter().rev().collect();
     Summary {
         total,
         by_model,
         by_day,
+        by_account,
     }
 }
 
@@ -557,8 +586,9 @@ pub fn format_tokens(n: u64) -> String {
 }
 
 pub fn format_usd(v: f64) -> String {
-    let whole = v.trunc() as i64;
-    let cents = ((v - v.trunc()) * 100.0).round() as i64;
+    // Round to whole cents first so 0.999 carries into the dollars ($1.00, not $0.100).
+    let total_cents = (v * 100.0).round() as i64;
+    let (whole, cents) = (total_cents / 100, total_cents % 100);
     let mut s = whole.to_string();
     let mut grouped = String::new();
     for (i, c) in s.chars().rev().enumerate() {
@@ -569,4 +599,189 @@ pub fn format_usd(v: f64) -> String {
     }
     s = grouped.chars().rev().collect();
     format!("${s}.{cents:02}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    const T0: &str = "2026-10-18T10:00:00.000Z";
+
+    fn line(id: &str, req: &str, ts: &str, model: &str, usage: &str, stop: Option<&str>) -> String {
+        let stop = stop.map(|s| format!("\"{s}\"")).unwrap_or("null".into());
+        format!(
+            r#"{{"type":"assistant","timestamp":"{ts}","requestId":"{req}","sessionId":"s1","message":{{"id":"{id}","model":"{model}","stop_reason":{stop},"usage":{usage}}}}}"#
+        )
+    }
+
+    fn usage(i: u64, cc: u64, cr: u64, o: u64) -> String {
+        format!(
+            r#"{{"input_tokens":{i},"cache_creation_input_tokens":{cc},"cache_read_input_tokens":{cr},"output_tokens":{o}}}"#
+        )
+    }
+
+    #[test]
+    fn parses_an_assistant_row() {
+        let u = r#"{"input_tokens":5,"cache_creation_input_tokens":100,"cache_read_input_tokens":2000,"output_tokens":40,"cache_creation":{"ephemeral_1h_input_tokens":300}}"#;
+        let r = parse_line(
+            &line("m1", "r1", T0, "claude-opus-5-5", u, Some("end_turn")),
+            0,
+        )
+        .unwrap();
+        assert_eq!((r.i, r.cc, r.cr, r.o), (5, 100, 2000, 40));
+        // the 1h subset can't exceed the cache writes it is part of
+        assert_eq!(r.c1, 100);
+        assert_eq!(&*r.m, "claude-opus-5-5");
+        assert_eq!(r.t, DateTime::parse_from_rfc3339(T0).unwrap().timestamp());
+        assert!(!r.inc);
+        assert_eq!(r.k, hash_key("m1", "r1"));
+    }
+
+    #[test]
+    fn skips_rows_without_billable_usage() {
+        let ok = usage(1, 0, 0, 1);
+        assert!(parse_line(&line("m", "r", T0, "x", &usage(0, 0, 0, 0), None), 0).is_none());
+        assert!(parse_line(&ok.replace("input", "x"), 0).is_none());
+        assert!(
+            parse_line(
+                &line("m", "r", T0, "x", &ok, None).replace("\"assistant\"", "\"user\""),
+                0
+            )
+            .is_none()
+        );
+        assert!(parse_line("{not json \"assistant\" \"usage\"", 0).is_none());
+        // older than the lookback window
+        let ts = DateTime::parse_from_rfc3339(T0).unwrap().timestamp();
+        assert!(parse_line(&line("m", "r", T0, "x", &ok, None), ts + 1).is_none());
+    }
+
+    #[test]
+    fn flags_incomplete_streaming_rows() {
+        let r = parse_line(&line("m", "r", T0, "x", &usage(10, 0, 0, 0), None), 0).unwrap();
+        assert!(r.inc);
+        let r = parse_line(
+            &line("m", "r", T0, "x", &usage(10, 0, 0, 0), Some("end_turn")),
+            0,
+        )
+        .unwrap();
+        assert!(!r.inc);
+    }
+
+    fn temp_file(name: &str, body: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("swapbar-test-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let p = dir.join(name);
+        fs::File::create(&p)
+            .unwrap()
+            .write_all(body.as_bytes())
+            .unwrap();
+        p
+    }
+
+    #[test]
+    fn scan_dedupes_and_leaves_a_partial_line_for_later() {
+        let first = line("m1", "r1", T0, "x", &usage(10, 0, 0, 0), None);
+        let last = line("m1", "r1", T0, "x", &usage(10, 0, 0, 7), Some("end_turn"));
+        let other = line("m2", "r2", T0, "x", &usage(1, 0, 0, 1), Some("end_turn"));
+        let partial = "{\"type\":\"assistant\"";
+        let body = format!("{first}\n{last}\n{other}\n{partial}");
+        let p = temp_file("scan.jsonl", &body);
+        let (recs, consumed) = scan_file(&p, 0, 0).unwrap();
+        assert_eq!(recs.len(), 2);
+        assert_eq!(recs[0].o, 7, "the final streaming chunk wins");
+        assert_eq!(consumed as usize, body.len() - partial.len());
+        // resuming from the offset reads nothing new
+        let (again, end) = scan_file(&p, consumed, 0).unwrap();
+        assert!(again.is_empty());
+        assert_eq!(end, consumed);
+    }
+
+    #[test]
+    fn a_complete_row_is_not_replaced_by_an_incomplete_one() {
+        let done = line("m1", "r1", T0, "x", &usage(10, 0, 0, 7), Some("end_turn"));
+        let stale = line("m1", "r1", T0, "x", &usage(10, 0, 0, 0), None);
+        let p = temp_file("order.jsonl", &format!("{done}\n{stale}\n"));
+        let (recs, _) = scan_file(&p, 0, 0).unwrap();
+        assert_eq!(recs.len(), 1);
+        assert_eq!(recs[0].o, 7);
+    }
+
+    fn rec(t: i64, model: &str, owner: Owner, i: u64, o: u64) -> Rec {
+        Rec {
+            k: t as u64,
+            t,
+            m: model.into(),
+            i,
+            cr: 0,
+            cc: 0,
+            c1: 0,
+            o,
+            inc: false,
+            owner,
+        }
+    }
+
+    #[test]
+    fn summarizes_by_model_and_account() {
+        let now = chrono::Utc::now().timestamp();
+        let a: Owner = Owner::Account(1, "a@x.com".into());
+        let b: Owner = Owner::Account(2, "b@x.com".into());
+        let m = 1_000_000;
+        let recs = vec![
+            rec(now, "claude-opus-5-5", a.clone(), m, 0),
+            rec(now, "claude-opus-5-5-20300101", b.clone(), m, m),
+            rec(now, "mystery-model", a.clone(), 5, 5),
+            // outside the 30-day window
+            rec(now - 40 * 86400, "claude-opus-5-5", a.clone(), m, m),
+        ];
+        let s = summarize(&recs, Period::Month, &PriceBook::default());
+        assert_eq!(s.total.requests, 3);
+        assert_eq!(s.total.unpriced, 1);
+        assert!((s.total.cost - 28.0).abs() < 1e-9);
+        // dated ids merge into one model row
+        assert_eq!(s.by_model[0].0, "claude-opus-5-5");
+        assert_eq!(s.by_model[0].1.requests, 2);
+        assert_eq!(
+            s.by_account
+                .iter()
+                .map(|(o, t)| (o.label(), t.cost))
+                .collect::<Vec<_>>(),
+            vec![("b@x.com", 24.0), ("a@x.com", 4.0)]
+        );
+    }
+
+    #[test]
+    fn incomplete_rows_count_tokens_but_no_cost() {
+        let now = chrono::Utc::now().timestamp();
+        let mut r = rec(now, "claude-opus-5-5", Owner::Unknown, 1_000_000, 0);
+        r.inc = true;
+        let s = summarize(&[r], Period::Today, &PriceBook::default());
+        assert_eq!(
+            (s.total.cost, s.total.input, s.total.unpriced),
+            (0.0, 1_000_000, 0)
+        );
+    }
+
+    #[test]
+    fn formats_token_counts() {
+        assert_eq!(format_tokens(999), "999");
+        assert_eq!(format_tokens(1_000), "1K");
+        assert_eq!(format_tokens(1_234), "1.23K");
+        assert_eq!(format_tokens(12_340), "12.3K");
+        assert_eq!(format_tokens(123_400), "123K");
+        assert_eq!(format_tokens(1_500_000), "1.5M");
+        assert_eq!(format_tokens(26_200_000_000), "26.2B");
+        assert_eq!(format_tokens(3_000_000_000_000), "3T");
+    }
+
+    #[test]
+    fn formats_dollars() {
+        assert_eq!(format_usd(0.0), "$0.00");
+        assert_eq!(format_usd(0.05), "$0.05");
+        assert_eq!(format_usd(9887.02), "$9,887.02");
+        assert_eq!(format_usd(1_234_567.5), "$1,234,567.50");
+        assert_eq!(format_usd(0.999), "$1.00");
+        assert_eq!(format_usd(41.996), "$42.00");
+    }
 }

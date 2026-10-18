@@ -28,8 +28,12 @@ Swapbar tüm cswap hesaplarının 5h, 7d ve model bazlı (Fable) kotalarını te
 
 - **Tüm hesaplar tek bakışta.** Her hesap için paketi (Max 20x, Max 5x, Pro, Team Premium/Standard), 5h, 7d ve model bazlı (Fable) çubuklar ve sıfırlanmaya kalan süre. Kalan %40'a inince çubuk sarıya, %15'e inince kırmızıya döner.
 - **Tek tıkla geçiş.** Pasif bir hesaba tıklamak `cswap switch` çalıştırır. Aktif hesap **current**, otomatik rotasyon dışındaki hesaplar **paused** olarak işaretlenir.
+- **Geçiş önerisi.** Aktif hesabın en dar penceresi düşük kota seviyesine (varsayılan %15 kalan) inince, en çok kotası kalan hesabı gösteren bir banner çıkar ve tek tıkla o hesaba geçilir. Bu hesap listede **suggested** olarak işaretlenir.
+- **Bildirimler.** Aktif hesabın kotası azalınca en uygun hesaba geçmek için **Switch** butonlu bir bildirim, tükenmiş bir hesabın kotası sıfırlanınca da ayrı bir bildirim gelir.
+- **Global kısayollar.** `⌃⌥S` her uygulamadan Swapbar'ı açar; `⌃⌥⇧S` en çok kotası kalan hesaba geçer. Erişilebilirlik izni gerekmez.
+- **Güncelleme kontrolü.** Swapbar açılışta ve 6 saatte bir GitHub'da yeni sürüm arar; yeni sürüm varsa **Download** banner'ı gösterir.
 - **Menü çubuğunda kota.** Swapbar ikonunun yanında aktif hesabın kotası `5h` ya da `5h · 7d` olarak, kalan veya kullanılan şeklinde görünür.
-- **Token ve maliyet özeti.** Bugün ve son 30 gün için maliyet, token, istek, output ve cache read toplamları, model bazlı maliyet dökümü ve input / cache read / cache write / output dağılım çubuğu.
+- **Token ve maliyet özeti.** Bugün ve son 30 gün için maliyet, token, istek, output ve cache read toplamları, hesap bazında (cswap'ın geçiş log'u, `cswap run` oturumları ve her profilin giriş yaptığı hesaptan çıkarılır) ve model bazlı maliyet dökümü ve input / cache read / cache write / output dağılım çubuğu.
 - **Açık ve koyu tema.** macOS görünümünü izler; Ayarlar'dan Açık ya da Koyu olarak sabitlenebilir.
 - **Küçük ve yerel.** Rust ve [gpui](https://crates.io/crates/gpui) (Zed'in UI framework'ü). Apple Silicon ve Intel için tek universal binary, yaklaşık 4 MB.
 
@@ -57,6 +61,14 @@ Popover'daki **Settings…** ile açılır. Tercihler `~/.config/swapbar/setting
 </table>
 
 ## Kurulum
+
+### Homebrew
+
+```sh
+brew install --cask afatmustafa/tap/swapbar
+```
+
+Cask, Swapbar'ı Uygulamalar klasörüne kurar; `brew upgrade --cask swapbar` ile güncellenir. [`claude-swap`](https://github.com/realiti4/claude-swap) kurulu ve hesapların ekli olmalı.
 
 ### İndirme
 

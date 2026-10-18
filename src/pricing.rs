@@ -209,3 +209,99 @@ fn parse_models_dev(text: &str) -> HashMap<String, Rate> {
     }
     map
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn close(a: f64, b: f64) -> bool {
+        (a - b).abs() < 1e-9
+    }
+
+    #[test]
+    fn normalizes_model_ids() {
+        assert_eq!(normalize_model("claude-opus-5-5"), "claude-opus-5-5");
+        assert_eq!(normalize_model(" Claude-Opus-5-5[1m] "), "claude-opus-5-5");
+        assert_eq!(
+            normalize_model("claude-sonnet-4-5-20250929"),
+            "claude-sonnet-4-5"
+        );
+        assert_eq!(
+            normalize_model("anthropic.claude-haiku-4-5-20251001"),
+            "claude-haiku-4-5"
+        );
+        assert_eq!(
+            normalize_model("us.anthropic.claude-opus-4-1-20250805"),
+            "claude-opus-4-1"
+        );
+        // a trailing 8-digit run is only a date with the dash in front of it
+        assert_eq!(normalize_model("model12345678"), "model12345678");
+    }
+
+    #[test]
+    fn looks_up_builtin_rates_with_prefix_fallback() {
+        let book = PriceBook::default();
+        let opus = book.lookup("claude-opus-5-5").unwrap();
+        assert!(close(opus.input, 4.0 / 1e6));
+        assert!(close(opus.output, 20.0 / 1e6));
+        // the longest matching prefix wins: opus-5-5, not opus-5
+        let fast = book.lookup("claude-opus-5-5-fast").unwrap();
+        assert!(close(fast.input, opus.input));
+        assert!(close(
+            book.lookup("claude-opus-5").unwrap().input,
+            5.0 / 1e6
+        ));
+        assert!(book.lookup("<synthetic>").is_none());
+        assert!(book.lookup("").is_none());
+        assert!(book.lookup("gpt-5").is_none());
+    }
+
+    #[test]
+    fn overlay_overrides_builtin() {
+        let mut book = PriceBook::default();
+        book.overlay.insert(
+            "claude-opus-5-5".into(),
+            Rate::per_million(1.0, 2.0, 0.1, 1.25),
+        );
+        assert!(close(
+            book.lookup("claude-opus-5-5").unwrap().input,
+            1.0 / 1e6
+        ));
+    }
+
+    #[test]
+    fn cost_bills_each_token_kind() {
+        let r = Rate::per_million(10.0, 50.0, 1.0, 12.5);
+        let m = 1_000_000;
+        assert!(close(r.cost(m, 0, 0, 0, 0), 10.0));
+        assert!(close(r.cost(0, m, 0, 0, 0), 1.0));
+        assert!(close(r.cost(0, 0, m, 0, 0), 12.5));
+        // 1h cache writes cost 2× input
+        assert!(close(r.cost(0, 0, 0, m, 0), 20.0));
+        assert!(close(r.cost(0, 0, 0, 0, m), 50.0));
+        assert!(close(r.cost(m, m, m, m, m), 93.5));
+    }
+
+    #[test]
+    fn parses_models_dev_payload() {
+        let json = r#"{
+            "anthropic": {"models": {
+                "claude-opus-9-20300101": {"cost": {"input": 3, "output": 15, "cache_read": 0.3, "cache_write": 3.75}},
+                "claude-new": {"cost": {"input": 2, "output": 8}},
+                "claude-free": {"cost": {"input": 1}},
+                "claude-nocost": {}
+            }},
+            "openai": {"models": {"gpt": {"cost": {"input": 1, "output": 1}}}}
+        }"#;
+        let map = parse_models_dev(json);
+        assert_eq!(map.len(), 2);
+        let opus = map["claude-opus-9"];
+        assert!(close(opus.cache_write, 3.75 / 1e6));
+        // missing cache prices default to 0.1× and 1.25× input
+        let new = map["claude-new"];
+        assert!(close(new.cache_read, 0.2 / 1e6));
+        assert!(close(new.cache_write, 2.5 / 1e6));
+        assert!(parse_models_dev("not json").is_empty());
+        assert!(parse_models_dev("{}").is_empty());
+    }
+}

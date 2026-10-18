@@ -239,3 +239,118 @@ pub fn set_enabled(number: u32, enabled: bool) -> Result<(), String> {
     ])
     .map(|_| ())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn oauth(org_type: &str, org_tier: &str, user_tier: &str) -> OauthAccount {
+        OauthAccount {
+            organization_type: Some(org_type.into()),
+            organization_rate_limit_tier: Some(org_tier.into()),
+            user_rate_limit_tier: Some(user_tier.into()),
+        }
+    }
+
+    #[test]
+    fn plan_labels() {
+        let label = |a: OauthAccount| plan_label(&a);
+        assert_eq!(
+            label(oauth("claude_max", "default_claude_max_20x", "")).as_deref(),
+            Some("Max 20x")
+        );
+        assert_eq!(
+            label(oauth("claude_max", "default_claude_max_5x", "")).as_deref(),
+            Some("Max 5x")
+        );
+        assert_eq!(label(oauth("claude_max", "", "")).as_deref(), Some("Max"));
+        assert_eq!(label(oauth("claude_pro", "", "")).as_deref(), Some("Pro"));
+        assert_eq!(
+            label(oauth("claude_team", "", "default_claude_max_5x")).as_deref(),
+            Some("Premium")
+        );
+        assert_eq!(
+            label(oauth("claude_enterprise", "", "")).as_deref(),
+            Some("Standard")
+        );
+        assert_eq!(label(oauth("api", "", "")), None);
+        assert_eq!(plan_label(&OauthAccount::default()), None);
+    }
+
+    #[test]
+    fn saved_config_reads_the_oauth_block() {
+        let cfg: SavedConfig = serde_json::from_str(
+            r#"{"numStartups":3,"oauthAccount":{"organizationType":"claude_pro","emailAddress":"a@x.com"}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            plan_label(&cfg.oauth_account.unwrap()).as_deref(),
+            Some("Pro")
+        );
+    }
+
+    // Trimmed from real `cswap list --json` output (cswap 0.26).
+    const LIST: &str = r#"{
+      "activeAccountNumber": 2,
+      "accounts": [
+        {"number": 1, "email": "a@x.com", "organizationName": "a@x.com's Organization",
+         "isOrganization": true, "active": false, "usageStatus": "ok",
+         "usage": {
+           "fiveHour": {"pct": 3.0, "resetsAt": "2026-10-18T19:30:00.241009+00:00", "countdown": "7m", "clock": "22:30"},
+           "sevenDay": {"pct": 61.0, "countdown": "2d 7h", "clock": "Oct 21 06:00", "expectedPct": 66.8, "aheadOfPace": false},
+           "scoped": [{"pct": 0.0, "countdown": "2d 7h", "name": "Fable"}]
+         },
+         "usageFetchedAt": "2026-10-18T19:18:21Z", "usageAgeSeconds": 224.4},
+        {"number": 2, "email": "b@x.com", "organizationName": "", "active": true, "disabled": true,
+         "usage": {"fiveHour": {"pct": 2.0}, "spend": {"used": 1.5, "limit": 10, "pct": 15, "currency": "USD"}}},
+        {"number": 3, "email": "c@x.com", "usageStatus": "token expired"}
+      ]
+    }"#;
+
+    #[test]
+    fn parses_list_json() {
+        let list: AccountList = serde_json::from_str(LIST).unwrap();
+        assert_eq!(list.active_account_number, Some(2));
+        assert_eq!(list.accounts.len(), 3);
+
+        let a = &list.accounts[0];
+        let u = a.usage.as_ref().unwrap();
+        assert_eq!(u.five_hour.as_ref().unwrap().pct, 3.0);
+        assert_eq!(
+            u.five_hour.as_ref().unwrap().clock.as_deref(),
+            Some("22:30")
+        );
+        assert_eq!(u.seven_day.as_ref().unwrap().expected_pct, Some(66.8));
+        assert_eq!(u.scoped[0].name.as_deref(), Some("Fable"));
+        assert_eq!(a.usage_age_seconds, Some(224.4));
+        assert_eq!(a.org_tag(), "a@x.com's Organization");
+        assert!(
+            a.plan.is_none(),
+            "plan is filled in by list(), not by serde"
+        );
+
+        let b = &list.accounts[1];
+        assert!(b.active && b.disabled);
+        assert_eq!(b.org_tag(), "personal");
+        assert_eq!(
+            b.usage.as_ref().unwrap().spend.as_ref().unwrap().limit,
+            10.0
+        );
+
+        let c = &list.accounts[2];
+        assert!(c.usage.is_none());
+        assert_eq!(c.usage_status.as_deref(), Some("token expired"));
+    }
+
+    #[test]
+    fn parses_config_json() {
+        let cfg: ConfigList = serde_json::from_str(
+            r#"{"settings":[{"key":"autoswitch.threshold","value":90,"isSet":true},{"key":"autoswitch.model","value":null}]}"#,
+        )
+        .unwrap();
+        assert_eq!(cfg.settings.len(), 2);
+        assert!(cfg.settings[0].is_set);
+        assert_eq!(cfg.settings[0].value.as_f64(), Some(90.0));
+        assert!(!cfg.settings[1].is_set);
+    }
+}

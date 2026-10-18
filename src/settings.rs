@@ -86,6 +86,12 @@ pub struct Prefs {
     pub accounts_refresh_secs: u64,
     pub usage_refresh_secs: u64,
     pub launch_at_login: bool,
+    /// Remaining percentage at which a window counts as low (notifications, switch suggestion).
+    pub low_quota_pct: u32,
+    pub notify_low: bool,
+    pub notify_reset: bool,
+    pub check_updates: bool,
+    pub hotkeys: bool,
 }
 
 impl Default for Prefs {
@@ -102,6 +108,11 @@ impl Default for Prefs {
             accounts_refresh_secs: 60,
             usage_refresh_secs: 120,
             launch_at_login: false,
+            low_quota_pct: 15,
+            notify_low: true,
+            notify_reset: true,
+            check_updates: true,
+            hotkeys: true,
         }
     }
 }
@@ -175,4 +186,36 @@ pub fn set_launch_at_login(enabled: bool) -> Result<(), String> {
         std::fs::remove_file(&p).map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn percent_mode_values_are_clamped() {
+        assert_eq!(PercentMode::Remaining.value(30.0), 70.0);
+        assert_eq!(PercentMode::Remaining.value(130.0), 0.0);
+        assert_eq!(PercentMode::Used.value(30.0), 30.0);
+        assert_eq!(PercentMode::Used.value(-5.0), 0.0);
+    }
+
+    #[test]
+    fn older_settings_files_get_defaults_for_new_keys() {
+        let p: Prefs = serde_json::from_str(r#"{"theme":"Dark","hidden_accounts":[3]}"#).unwrap();
+        assert_eq!(p.theme, Theme::Dark);
+        assert!(p.is_hidden(3));
+        assert_eq!(p.low_quota_pct, 15);
+        assert!(p.notify_low && p.check_updates && p.hotkeys);
+        assert_eq!(p.accounts_refresh_secs, 60);
+    }
+
+    #[test]
+    fn toggle_hidden_flips_membership() {
+        let mut p = Prefs::default();
+        p.toggle_hidden(2);
+        assert!(p.is_hidden(2));
+        p.toggle_hidden(2);
+        assert!(!p.is_hidden(2));
+    }
 }

@@ -28,8 +28,12 @@ Swapbar shows the 5h, 7d and per-model (Fable) quotas of every cswap account at 
 
 - **All accounts, one glance.** Each account shows its plan (Max 20x, Max 5x, Pro, Team Premium/Standard) and gets 5h, 7d and per-model (Fable) bars with time to reset. The bars turn yellow at 40% left and red at 15%.
 - **One-click switching.** Click an inactive account to run `cswap switch`. The active account is marked **current**, and accounts left out of auto-rotation show as **paused**.
+- **Switch suggestion.** When the current account's tightest window drops to the low-quota level (15% left by default), a banner names the account with the most room and switches to it in one click. That account is also marked **suggested** in the list.
+- **Notifications.** A notification when the current account runs low, with a **Switch** button for the best other account, and another when a depleted account's quota resets.
+- **Global shortcuts.** `⌃⌥S` opens Swapbar from any app; `⌃⌥⇧S` switches to the account with the most quota left. No Accessibility permission needed.
+- **Update check.** Swapbar checks GitHub for a new release at launch and every 6 hours and shows a **Download** banner when one is out.
 - **Quota in the menu bar.** The Swapbar icon is followed by the active account's quota, as `5h` or `5h · 7d`, shown as remaining or used.
-- **Token and cost summary.** Today and 30-day totals for cost, tokens, requests, output and cache reads, a per-model cost breakdown, and a bar splitting input, cache read, cache write and output.
+- **Token and cost summary.** Today and 30-day totals for cost, tokens, requests, output and cache reads, cost per account (worked out from cswap's switch log, `cswap run` sessions and each profile's login) and per model, and a bar splitting input, cache read, cache write and output.
 - **Light and dark.** Follows the macOS appearance, or set it to Light or Dark in Settings.
 - **Small and native.** Rust and [gpui](https://crates.io/crates/gpui) (Zed's UI framework), a universal binary for Apple Silicon and Intel, about 4 MB.
 
@@ -57,6 +61,14 @@ Open **Settings…** from the popover. Preferences are stored in `~/.config/swap
 </table>
 
 ## Installation
+
+### Homebrew
+
+```sh
+brew install --cask afatmustafa/tap/swapbar
+```
+
+The cask installs Swapbar into Applications; `brew upgrade --cask swapbar` updates it. You still need [`claude-swap`](https://github.com/realiti4/claude-swap) with your accounts added.
 
 ### Download
 
