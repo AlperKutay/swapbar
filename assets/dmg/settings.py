@@ -32,4 +32,5 @@ icon_locations = {
     os.path.basename(app): (170, 236),
     "Applications": (490, 236),
 }
-hide_extensions = [os.path.basename(app)]
+# No hide_extensions: it sets com.apple.FinderInfo on the signed bundle, which fails
+# `codesign --verify --strict`. Finder hides ".app" by default anyway.
