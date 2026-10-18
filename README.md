@@ -1,8 +1,6 @@
 <p align="center">
-  <img src="assets/logo.svg" width="72" height="72" alt="Swapbar logo">
+  <img src="docs/screenshots/hero.png" alt="Swapbar: the menu bar popover in light and dark mode, showing four Claude accounts with plan badges, 5h and Fable quotas, and token cost">
 </p>
-
-<h1 align="center">Swapbar</h1>
 
 <p align="center">
   Every Claude account's quota in view, one click to switch.<br>
@@ -23,7 +21,7 @@ Swapbar shows the 5h, 7d and per-model (Fable) quotas of every cswap account at 
 
 ## Features
 
-- **All accounts, one glance.** Each account gets 5h, 7d and per-model (Fable) bars with time to reset. The bars turn yellow at 40% left and red at 15%.
+- **All accounts, one glance.** Each account shows its plan (Max 20x, Max 5x, Pro, Team Premium/Standard) and gets 5h, 7d and per-model (Fable) bars with time to reset. The bars turn yellow at 40% left and red at 15%.
 - **One-click switching.** Click an inactive account to run `cswap switch`. The active account is marked **current**, and accounts left out of auto-rotation show as **paused**.
 - **Quota in the menu bar.** The Swapbar icon is followed by the active account's quota, as `5h` or `5h · 7d`, shown as remaining or used.
 - **Token and cost summary.** Today and 30-day totals for cost, tokens, requests, output and cache reads, a per-model cost breakdown, and a bar splitting input, cache read, cache write and output.
@@ -109,7 +107,7 @@ cargo run -- --scan                                # headless: print the token a
 
 `SWAPBAR_PAGE` accepts `menubar`, `accounts`, `auto` and `about`; anything else opens General.
 
-The screenshots above use demo accounts and generated transcripts, not real data.
+The popover and settings screenshots use demo accounts and generated transcripts. Usage and quota figures in the header image are illustrative.
 
 ### Files
 

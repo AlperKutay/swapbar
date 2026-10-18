@@ -66,7 +66,11 @@ const DARK: T = T {
 };
 
 fn t() -> &'static T {
-    if crate::theme::is_dark() { &DARK } else { &LIGHT }
+    if crate::theme::is_dark() {
+        &DARK
+    } else {
+        &LIGHT
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -510,8 +514,12 @@ fn page_accounts(s: &AppState) -> impl IntoElement {
                 let enabled = !acc.disabled;
                 let label = format!("{}  {}", n, acc.email);
                 let desc = format!(
-                    "{}{}",
+                    "{}{}{}",
                     acc.org_tag(),
+                    acc.plan
+                        .as_deref()
+                        .map(|p| format!(" · {p}"))
+                        .unwrap_or_default(),
                     if acc.active { " · current" } else { "" }
                 );
                 rows.push(row(
@@ -676,31 +684,104 @@ fn page_about() -> impl IntoElement {
                 .border_1()
                 .border_color(c(t().hairline))
                 .child(icon("logomark", 64.0, c(t().accent)))
-                .child(div().text_size(px(15.0)).font_weight(FontWeight::SEMIBOLD).text_color(c(t().text)).mt_2().child(APP_NAME))
-                .child(div().text_size(px(12.0)).text_color(c(t().secondary)).child(format!("Version {APP_VERSION}")))
-                .child(div().text_size(px(11.0)).text_color(c(t().tertiary)).child(built.to_string()))
-                .child(div().text_size(px(11.0)).text_color(c(t().secondary)).mt_2().child("Every Claude account's quota in view, one click to switch.")),
+                .child(
+                    div()
+                        .text_size(px(15.0))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(c(t().text))
+                        .mt_2()
+                        .child(APP_NAME),
+                )
+                .child(
+                    div()
+                        .text_size(px(12.0))
+                        .text_color(c(t().secondary))
+                        .child(format!("Version {APP_VERSION}")),
+                )
+                .child(
+                    div()
+                        .text_size(px(11.0))
+                        .text_color(c(t().tertiary))
+                        .child(built.to_string()),
+                )
+                .child(
+                    div()
+                        .text_size(px(11.0))
+                        .text_color(c(t().secondary))
+                        .mt_2()
+                        .child("Every Claude account's quota in view, one click to switch."),
+                ),
         )
         .child(heading("Author"))
-        .child(group(vec![
-            row("Mustafa Afat", Some("Co-Owner & CTO of Miova and Founder & CEO of Fidkeep"), div().text_size(px(11.0)).text_color(c(t().tertiary)).child("Turkey")),
-        ]))
+        .child(group(vec![row(
+            "Mustafa Afat",
+            Some("Co-Owner & CTO of Miova and Founder & CEO of Fidkeep"),
+            div()
+                .text_size(px(11.0))
+                .text_color(c(t().tertiary))
+                .child("Turkey"),
+        )]))
         .child(heading("Links"))
         .child(group(vec![
-            link("l-src", "github", "Swapbar source", "https://github.com/afatmustafa/swapbar").into_any_element(),
+            link(
+                "l-src",
+                "github",
+                "Swapbar source",
+                "https://github.com/afatmustafa/swapbar",
+            )
+            .into_any_element(),
             link("l-web", "globe", "Website", "https://afat.me").into_any_element(),
             link("l-gh", "github", "GitHub", "https://github.com/afatmustafa").into_any_element(),
             link("l-x", "x", "X / Twitter", "https://twitter.com/afatmus").into_any_element(),
-            link("l-ig", "instagram", "Instagram", "https://www.instagram.com/afatmustafa/").into_any_element(),
-            link("l-miova", "rocket", "Miova", "https://github.com/miovaagency").into_any_element(),
+            link(
+                "l-ig",
+                "instagram",
+                "Instagram",
+                "https://www.instagram.com/afatmustafa/",
+            )
+            .into_any_element(),
+            link(
+                "l-miova",
+                "rocket",
+                "Miova",
+                "https://github.com/miovaagency",
+            )
+            .into_any_element(),
         ]))
         .child(heading("Built with"))
         .child(group(vec![
-            link("l-cswap", "github", "claude-swap — multi-account switching and quota polling", "https://github.com/realiti4/claude-swap").into_any_element(),
-            link("l-gpui", "github", "gpui — Zed's GPU-accelerated UI framework", "https://github.com/zed-industries/zed/tree/main/crates/gpui").into_any_element(),
-            link("l-hugeicons", "globe", "Hugeicons — icon set", "https://hugeicons.com/?via=afat").into_any_element(),
+            link(
+                "l-cswap",
+                "github",
+                "claude-swap — multi-account switching and quota polling",
+                "https://github.com/realiti4/claude-swap",
+            )
+            .into_any_element(),
+            link(
+                "l-gpui",
+                "github",
+                "gpui — Zed's GPU-accelerated UI framework",
+                "https://github.com/zed-industries/zed/tree/main/crates/gpui",
+            )
+            .into_any_element(),
+            link(
+                "l-hugeicons",
+                "globe",
+                "Hugeicons — icon set",
+                "https://hugeicons.com/?via=afat",
+            )
+            .into_any_element(),
         ]))
-        .child(div().text_size(px(10.5)).text_color(c(t().tertiary)).mt_4().mb_2().flex().justify_center().child("© 2026 Mustafa Afat. MIT License."))
+        .child(
+            div()
+                .text_size(px(10.5))
+                .text_color(c(t().tertiary))
+                .mt_4()
+                .mb_2()
+                .flex()
+                .justify_center()
+                .child("© 2026 Mustafa Afat. MIT License."),
+        )
 }
 
 // ---------- root ----------

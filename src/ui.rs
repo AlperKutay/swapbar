@@ -64,7 +64,11 @@ const DARK: T = T {
 };
 
 fn t() -> &'static T {
-    if crate::theme::is_dark() { &DARK } else { &LIGHT }
+    if crate::theme::is_dark() {
+        &DARK
+    } else {
+        &LIGHT
+    }
 }
 
 fn remaining_color(remaining: f64) -> Hsla {
@@ -266,7 +270,11 @@ fn account_row(
             div()
                 .size(px(7.0))
                 .rounded_full()
-                .bg(if active { c(t().accent) } else { c(t().hairline) })
+                .bg(if active {
+                    c(t().accent)
+                } else {
+                    c(t().hairline)
+                })
                 .flex_shrink_0(),
         )
         .child(
@@ -281,6 +289,20 @@ fn account_row(
                 .whitespace_nowrap()
                 .child(acc.email.clone()),
         )
+        .when_some(acc.plan.clone(), |d, plan| {
+            d.child(
+                div()
+                    .flex_shrink_0()
+                    .px(px(5.0))
+                    .rounded(px(4.0))
+                    .bg(c(t().hover))
+                    .text_size(px(10.0))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(c(t().secondary))
+                    .whitespace_nowrap()
+                    .child(plan),
+            )
+        })
         .child(
             div()
                 .flex_1()
@@ -341,7 +363,9 @@ fn account_row(
         .px_4()
         .py_2p5()
         .when(!is_last, |d| d.border_b_1().border_color(c(t().hairline)))
-        .when(!active, |d| d.cursor_pointer().hover(|d| d.bg(c(t().hover))))
+        .when(!active, |d| {
+            d.cursor_pointer().hover(|d| d.bg(c(t().hover)))
+        })
         .child(title)
         .child(quotas)
         .on_click(cx.listener(move |_, _, _, cx| {

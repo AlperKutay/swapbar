@@ -63,6 +63,9 @@ pub struct Account {
     pub usage: Option<Usage>,
     #[serde(default)]
     pub usage_age_seconds: Option<f64>,
+    /// Plan label ("Max 20x", "Premium", …), read from cswap's saved Claude profile.
+    #[serde(skip)]
+    pub plan: Option<String>,
 }
 
 impl Account {
@@ -120,7 +123,80 @@ fn run(args: &[&str]) -> Result<String, String> {
 
 pub fn list() -> Result<AccountList, String> {
     let raw = run(&["list", "--json"])?;
-    serde_json::from_str(&raw).map_err(|e| format!("cswap list çıktısı okunamadı: {e}"))
+    let mut list: AccountList =
+        serde_json::from_str(&raw).map_err(|e| format!("cswap list çıktısı okunamadı: {e}"))?;
+    for acc in &mut list.accounts {
+        acc.plan = plan_for(acc.number);
+    }
+    Ok(list)
+}
+
+// ---- Plan labels ---------------------------------------------------------
+
+/// The `oauthAccount` block Claude Code keeps in its config; cswap saves one
+/// copy per account as `~/.claude-swap-backup/configs/.claude-config-<n>-<email>.json`.
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct OauthAccount {
+    #[serde(default)]
+    organization_type: Option<String>,
+    #[serde(default)]
+    organization_rate_limit_tier: Option<String>,
+    #[serde(default)]
+    user_rate_limit_tier: Option<String>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct SavedConfig {
+    #[serde(default)]
+    oauth_account: Option<OauthAccount>,
+}
+
+fn plan_for(number: u32) -> Option<String> {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let dir = std::path::Path::new(&home)
+        .join(".claude-swap-backup")
+        .join("configs");
+    let prefix = format!(".claude-config-{number}-");
+    let path = std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .find(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with(&prefix) && n.ends_with(".json"))
+        })?;
+    let cfg: SavedConfig = serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
+    plan_label(&cfg.oauth_account?)
+}
+
+fn plan_label(a: &OauthAccount) -> Option<String> {
+    let tier = |t: &Option<String>| t.as_deref().unwrap_or("").to_string();
+    let max = |t: &str| {
+        if t.contains("20x") {
+            "Max 20x"
+        } else if t.contains("5x") {
+            "Max 5x"
+        } else {
+            "Max"
+        }
+    };
+    let label = match a.organization_type.as_deref()? {
+        "claude_max" => max(&tier(&a.organization_rate_limit_tier)),
+        "claude_pro" => "Pro",
+        // Team and Enterprise seats: a Premium seat carries a per-user Max rate-limit tier.
+        "claude_team" | "claude_enterprise" => {
+            if tier(&a.user_rate_limit_tier).contains("max") {
+                "Premium"
+            } else {
+                "Standard"
+            }
+        }
+        _ => return None,
+    };
+    Some(label.to_string())
 }
 
 pub fn switch(number: u32) -> Result<(), String> {

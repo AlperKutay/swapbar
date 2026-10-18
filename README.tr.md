@@ -1,8 +1,6 @@
 <p align="center">
-  <img src="assets/logo.svg" width="72" height="72" alt="Swapbar logosu">
+  <img src="docs/screenshots/hero.png" alt="Swapbar: açık ve koyu temada menü çubuğu popover'ı; paket etiketleri, 5h ve Fable kotaları ve token maliyetiyle dört Claude hesabı">
 </p>
-
-<h1 align="center">Swapbar</h1>
 
 <p align="center">
   Tüm Claude hesaplarının kotası tek bakışta, hesap değiştirmek tek tık.<br>
@@ -23,7 +21,7 @@ Swapbar tüm cswap hesaplarının 5h, 7d ve model bazlı (Fable) kotalarını te
 
 ## Özellikler
 
-- **Tüm hesaplar tek bakışta.** Her hesap için 5h, 7d ve model bazlı (Fable) çubuklar ve sıfırlanmaya kalan süre. Kalan %40'a inince çubuk sarıya, %15'e inince kırmızıya döner.
+- **Tüm hesaplar tek bakışta.** Her hesap için paketi (Max 20x, Max 5x, Pro, Team Premium/Standard), 5h, 7d ve model bazlı (Fable) çubuklar ve sıfırlanmaya kalan süre. Kalan %40'a inince çubuk sarıya, %15'e inince kırmızıya döner.
 - **Tek tıkla geçiş.** Pasif bir hesaba tıklamak `cswap switch` çalıştırır. Aktif hesap **current**, otomatik rotasyon dışındaki hesaplar **paused** olarak işaretlenir.
 - **Menü çubuğunda kota.** Swapbar ikonunun yanında aktif hesabın kotası `5h` ya da `5h · 7d` olarak, kalan veya kullanılan şeklinde görünür.
 - **Token ve maliyet özeti.** Bugün ve son 30 gün için maliyet, token, istek, output ve cache read toplamları, model bazlı maliyet dökümü ve input / cache read / cache write / output dağılım çubuğu.
@@ -109,7 +107,7 @@ cargo run -- --scan                                # GUI'siz: token ve maliyet �
 
 `SWAPBAR_PAGE` şu değerleri alır: `menubar`, `accounts`, `auto`, `about`. Diğer değerler General sayfasını açar.
 
-Yukarıdaki ekran görüntülerinde gerçek veri değil, demo hesaplar ve üretilmiş transkriptler kullanıldı.
+Popover ve ayar ekran görüntülerinde demo hesaplar ve üretilmiş transkriptler kullanıldı. Üstteki görseldeki kullanım ve kota rakamları temsilidir.
 
 ### Dosyalar
 
