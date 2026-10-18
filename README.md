@@ -8,8 +8,13 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/afatmustafa/swapbar/releases/latest"><img src="https://img.shields.io/github/v/release/afatmustafa/swapbar" alt="Latest release"></a>
+  <a href="https://github.com/afatmustafa/swapbar/releases"><img src="https://img.shields.io/github/downloads/afatmustafa/swapbar/total" alt="Downloads"></a>
+</p>
+
+<p align="center">
   <a href="https://github.com/afatmustafa/swapbar/releases/latest"><b>Download</b></a> ·
-  <a href="https://afat.me">Website</a> ·
+  <a href="https://swapbar.afat.me">Website</a> ·
   <b>English</b> | <a href="README.tr.md">Türkçe</a>
 </p>
 
