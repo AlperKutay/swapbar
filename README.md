@@ -9,7 +9,7 @@
 
 <p align="center">
   <a href="https://github.com/afatmustafa/swapbar/releases/latest"><img src="https://img.shields.io/github/v/release/afatmustafa/swapbar" alt="Latest release"></a>
-  <a href="https://github.com/afatmustafa/swapbar/releases"><img src="https://img.shields.io/github/downloads/afatmustafa/swapbar/total" alt="Downloads"></a>
+  <a href="https://github.com/afatmustafa/swapbar/releases"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2Fafatmustafa%2Fswapbar%2Fbadges%2Fdownloads.json" alt="Downloads"></a>
 </p>
 
 <p align="center">
