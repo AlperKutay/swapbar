@@ -1,5 +1,6 @@
 mod advice;
 mod assets;
+mod attribution;
 mod cswap;
 mod hotkey;
 mod notify;
@@ -129,6 +130,15 @@ fn main() {
                 s.total.requests,
                 s.total.unpriced
             );
+            for (o, t) in &s.by_account {
+                println!(
+                    "         {:<28} {:>10} {:>8} {:>6}",
+                    o.label(),
+                    usage::format_usd(t.cost),
+                    usage::format_tokens(t.tokens()),
+                    t.requests
+                );
+            }
             for (m, t) in &s.by_model {
                 println!(
                     "         {m:<28} {:>10} {:>8} {:>6}",

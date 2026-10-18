@@ -33,7 +33,7 @@ Swapbar shows the 5h, 7d and per-model (Fable) quotas of every cswap account at 
 - **Global shortcuts.** `⌃⌥S` opens Swapbar from any app; `⌃⌥⇧S` switches to the account with the most quota left. No Accessibility permission needed.
 - **Update check.** Swapbar checks GitHub for a new release at launch and every 6 hours and shows a **Download** banner when one is out.
 - **Quota in the menu bar.** The Swapbar icon is followed by the active account's quota, as `5h` or `5h · 7d`, shown as remaining or used.
-- **Token and cost summary.** Today and 30-day totals for cost, tokens, requests, output and cache reads, a per-model cost breakdown, and a bar splitting input, cache read, cache write and output.
+- **Token and cost summary.** Today and 30-day totals for cost, tokens, requests, output and cache reads, cost per account (worked out from cswap's switch log, `cswap run` sessions and each profile's login) and per model, and a bar splitting input, cache read, cache write and output.
 - **Light and dark.** Follows the macOS appearance, or set it to Light or Dark in Settings.
 - **Small and native.** Rust and [gpui](https://crates.io/crates/gpui) (Zed's UI framework), a universal binary for Apple Silicon and Intel, about 4 MB.
 
@@ -61,6 +61,14 @@ Open **Settings…** from the popover. Preferences are stored in `~/.config/swap
 </table>
 
 ## Installation
+
+### Homebrew
+
+```sh
+brew install --cask afatmustafa/tap/swapbar
+```
+
+The cask installs Swapbar into Applications; `brew upgrade --cask swapbar` updates it. You still need [`claude-swap`](https://github.com/realiti4/claude-swap) with your accounts added.
 
 ### Download
 

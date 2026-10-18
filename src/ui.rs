@@ -765,6 +765,30 @@ fn usage_section(state: &AppState) -> impl IntoElement {
 
     col = col.child(div().px_4().py_1p5().child(hairline()));
 
+    // per-account costs, ordered by 30-day cost; only worth a block with two or more
+    if month.by_account.len() > 1 {
+        for (owner, tot) in &month.by_account {
+            let today_cost = today
+                .by_account
+                .iter()
+                .find(|(o, _)| o == owner)
+                .map(|(_, t)| t.cost)
+                .unwrap_or(0.0);
+            col = col.child(usage_line(
+                owner.label().to_string(),
+                if today_cost > 0.0 {
+                    format_usd(today_cost)
+                } else {
+                    "–".into()
+                },
+                format_usd(tot.cost),
+                false,
+                false,
+            ));
+        }
+        col = col.child(div().px_4().py_1p5().child(hairline()));
+    }
+
     // per-model costs, ordered by 30-day cost
     for (name, tot) in month.by_model.iter().take(6) {
         let short = name.strip_prefix("claude-").unwrap_or(name).to_string();
