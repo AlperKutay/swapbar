@@ -32,6 +32,7 @@ icons!(
     "coins",
     "rocket",
     "bell",
+    "check",
     "logomark"
 );
 

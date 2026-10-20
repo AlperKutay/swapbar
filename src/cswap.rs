@@ -2,8 +2,9 @@
 //! Anthropic usage API cadence (rate limited to ~30 req/h/account) and the
 //! switch transaction, so we never reimplement any of it here.
 
+use crate::i18n::l;
+use crate::setup::{self, Tool};
 use serde::Deserialize;
-use std::process::Command;
 
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -19,6 +20,14 @@ pub struct Window {
     pub name: Option<String>,
     #[serde(default)]
     pub expected_pct: Option<f64>,
+    /// cswap's pace check: used more than `expected_pct` at this point of the window.
+    #[serde(default)]
+    pub ahead_of_pace: Option<bool>,
+    /// When the window runs out at the current pace (cswap's linear projection).
+    #[serde(default)]
+    pub projected_exhaustion_at: Option<String>,
+    #[serde(default)]
+    pub will_last_to_reset: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -63,16 +72,77 @@ pub struct Account {
     pub usage: Option<Usage>,
     #[serde(default)]
     pub usage_age_seconds: Option<f64>,
+    /// cswap's last successful reading, kept while fresh fetches fail (e.g. HTTP 429).
+    #[serde(default)]
+    pub last_good_usage: Option<Usage>,
+    #[serde(default)]
+    pub last_good_age_seconds: Option<f64>,
+    /// `usage` holds `last_good_usage` because the latest fetch failed.
+    #[serde(skip)]
+    pub stale: bool,
     /// Plan label ("Max 20x", "Premium", …), read from cswap's saved Claude profile.
     #[serde(skip)]
     pub plan: Option<String>,
 }
 
 impl Account {
+    /// The alias if there is one, else the email.
+    pub fn name(&self) -> &str {
+        self.alias
+            .as_deref()
+            .filter(|a| !a.is_empty())
+            .unwrap_or(&self.email)
+    }
+
+    /// The saved login is unusable until the account signs in again.
+    pub fn needs_login(&self) -> bool {
+        matches!(
+            self.usage_status.as_deref(),
+            Some("relogin_required" | "foreign_credential" | "no_credentials")
+        )
+    }
+
+    /// cswap's `usageStatus`, worded for people.
+    pub fn status_label(&self) -> Option<String> {
+        let st = self.usage_status.as_deref().filter(|s| *s != "ok")?;
+        Some(
+            match st {
+                "unavailable" => l("couldn't fetch usage", "kullanım alınamadı"),
+                "token_expired" => l(
+                    "token expired, cswap refreshes it",
+                    "token süresi doldu, cswap yeniliyor",
+                ),
+                "relogin_required" => l(
+                    "signed out, sign in again",
+                    "oturum kapandı, yeniden giriş yap",
+                ),
+                "foreign_credential" => l(
+                    "saved login belongs to another account",
+                    "kayıtlı giriş başka bir hesaba ait",
+                ),
+                "no_credentials" => l("no saved login", "kayıtlı giriş yok"),
+                "keychain_unavailable" => l("Keychain is locked", "Anahtar Zinciri kilitli"),
+                "api_key" => l("API key, no plan quota", "API anahtarı, plan kotası yok"),
+                other => other,
+            }
+            .to_string(),
+        )
+    }
+
+    /// Show the last good reading when the latest fetch failed, as `cswap watch` does.
+    /// `usage_status` keeps the failure, so advice still ignores the account.
+    fn fall_back_to_last_good(&mut self) {
+        if self.usage.is_none() && self.last_good_usage.is_some() {
+            self.usage = self.last_good_usage.take();
+            self.usage_age_seconds = self.last_good_age_seconds;
+            self.stale = true;
+        }
+    }
+
     pub fn org_tag(&self) -> String {
         match &self.organization_name {
             Some(n) if !n.is_empty() => n.clone(),
-            _ => "personal".to_string(),
+            _ => l("personal", "kişisel").to_string(),
         }
     }
 }
@@ -84,30 +154,55 @@ pub struct AccountList {
     pub active_account_number: Option<u32>,
     #[serde(default)]
     pub accounts: Vec<Account>,
+    /// "Account-1 and Account-2 hold the same credential (…)": one slot's login was
+    /// overwritten with another account's.
+    #[serde(default)]
+    pub duplicate_account_warnings: Vec<String>,
 }
 
-fn cswap_bin() -> String {
-    if let Ok(p) = std::env::var("CSWAP_BIN") {
-        return p;
+impl AccountList {
+    /// Slot numbers named in the duplicate-credential warnings.
+    pub fn duplicate_slots(&self) -> Vec<u32> {
+        let mut slots: Vec<u32> = self
+            .duplicate_account_warnings
+            .iter()
+            .flat_map(|w| w.split("Account-").skip(1))
+            .filter_map(|rest| {
+                let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+                digits.parse().ok()
+            })
+            .collect();
+        slots.sort_unstable();
+        slots.dedup();
+        slots
     }
-    let home = std::env::var("HOME").unwrap_or_default();
-    for candidate in [
-        format!("{home}/.local/bin/cswap"),
-        "/opt/homebrew/bin/cswap".to_string(),
-        "/usr/local/bin/cswap".to_string(),
-    ] {
-        if std::path::Path::new(&candidate).exists() {
-            return candidate;
-        }
-    }
-    "cswap".to_string()
 }
 
 fn run(args: &[&str]) -> Result<String, String> {
-    let out = Command::new(cswap_bin())
+    run_with_input(args, None)
+}
+
+/// Run cswap, answering its `[y/N]` prompt with `input` when given (cswap has no `--yes`).
+fn run_with_input(args: &[&str], input: Option<&str>) -> Result<String, String> {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let bin = setup::find(Tool::Cswap).ok_or(l("cswap isn't installed", "cswap kurulu değil"))?;
+    let mut child = setup::command(&bin)
         .args(args)
-        .output()
-        .map_err(|e| format!("cswap başlatılamadı: {e}"))?;
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("couldn't start cswap: {e}"))?;
+    if let Some(mut stdin) = child.stdin.take()
+        && let Some(input) = input
+    {
+        let _ = stdin.write_all(input.as_bytes());
+    }
+    let out = child
+        .wait_with_output()
+        .map_err(|e| format!("cswap {}: {e}", args.join(" ")))?;
     let stdout = String::from_utf8_lossy(&out.stdout).to_string();
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
@@ -116,16 +211,35 @@ fn run(args: &[&str]) -> Result<String, String> {
         } else {
             stderr
         };
-        return Err(format!("cswap {} hata: {}", args.join(" "), msg));
+        return Err(format!("cswap {}: {}", args.join(" "), strip_ansi(&msg)));
     }
     Ok(stdout)
 }
 
+/// cswap colours its messages even when piped.
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(ch) = chars.next() {
+        if ch == '\u{1b}' {
+            for c in chars.by_ref() {
+                if c.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
 pub fn list() -> Result<AccountList, String> {
     let raw = run(&["list", "--json"])?;
-    let mut list: AccountList =
-        serde_json::from_str(&raw).map_err(|e| format!("cswap list çıktısı okunamadı: {e}"))?;
+    let mut list: AccountList = serde_json::from_str(&raw)
+        .map_err(|e| format!("couldn't read `cswap list` output: {e}"))?;
     for acc in &mut list.accounts {
+        acc.fall_back_to_last_good();
         acc.plan = plan_for(acc.number);
     }
     Ok(list)
@@ -221,7 +335,7 @@ pub struct ConfigList {
 
 pub fn config_list() -> Result<ConfigList, String> {
     let raw = run(&["config", "--json"])?;
-    serde_json::from_str(&raw).map_err(|e| format!("cswap config çıktısı okunamadı: {e}"))
+    serde_json::from_str(&raw).map_err(|e| format!("couldn't read `cswap config` output: {e}"))
 }
 
 pub fn config_set(key: &str, value: &str) -> Result<(), String> {
@@ -238,6 +352,34 @@ pub fn set_enabled(number: u32, enabled: bool) -> Result<(), String> {
         &number.to_string(),
     ])
     .map(|_| ())
+}
+
+/// Save the account Claude Code is signed in to: a new slot, or fresh credentials for
+/// the slot that already holds it.
+pub fn add_current(alias: Option<&str>) -> Result<(), String> {
+    let mut args = vec!["add"];
+    if let Some(alias) = alias {
+        args.extend(["--alias", alias]);
+    }
+    run(&args).map(|_| ())
+}
+
+pub fn remove(number: u32) -> Result<(), String> {
+    run_with_input(&["remove", &number.to_string()], Some("y\n")).map(|_| ())
+}
+
+pub fn set_alias(number: u32, alias: Option<&str>) -> Result<(), String> {
+    let n = number.to_string();
+    match alias {
+        Some(a) => run(&["alias", &n, a]),
+        None => run(&["alias", &n, "--unset"]),
+    }
+    .map(|_| ())
+}
+
+/// Exchange two accounts' slot numbers.
+pub fn swap_slots(a: u32, b: u32) -> Result<(), String> {
+    run(&["swap", &a.to_string(), &b.to_string()]).map(|_| ())
 }
 
 #[cfg(test)]
@@ -303,7 +445,10 @@ mod tests {
          "usageFetchedAt": "2026-10-18T19:18:21Z", "usageAgeSeconds": 224.4},
         {"number": 2, "email": "b@x.com", "organizationName": "", "active": true, "disabled": true,
          "usage": {"fiveHour": {"pct": 2.0}, "spend": {"used": 1.5, "limit": 10, "pct": 15, "currency": "USD"}}},
-        {"number": 3, "email": "c@x.com", "usageStatus": "token expired"}
+        {"number": 3, "email": "c@x.com", "usageStatus": "token expired"},
+        {"number": 4, "email": "d@x.com", "usageStatus": "unavailable", "usage": null,
+         "lastGoodUsage": {"fiveHour": {"pct": 0.0}, "sevenDay": {"pct": 63.0, "countdown": "1d 14h"}},
+         "lastGoodFetchedAt": "2026-10-19T07:47:16Z", "lastGoodAgeSeconds": 16875.8}
       ]
     }"#;
 
@@ -311,7 +456,7 @@ mod tests {
     fn parses_list_json() {
         let list: AccountList = serde_json::from_str(LIST).unwrap();
         assert_eq!(list.active_account_number, Some(2));
-        assert_eq!(list.accounts.len(), 3);
+        assert_eq!(list.accounts.len(), 4);
 
         let a = &list.accounts[0];
         let u = a.usage.as_ref().unwrap();
@@ -352,5 +497,60 @@ mod tests {
         assert!(cfg.settings[0].is_set);
         assert_eq!(cfg.settings[0].value.as_f64(), Some(90.0));
         assert!(!cfg.settings[1].is_set);
+    }
+
+    #[test]
+    fn failed_fetch_falls_back_to_last_good_usage() {
+        let mut list: AccountList = serde_json::from_str(LIST).unwrap();
+        for acc in &mut list.accounts {
+            acc.fall_back_to_last_good();
+        }
+        let d = &list.accounts[3];
+        assert!(d.stale);
+        assert_eq!(d.usage_status.as_deref(), Some("unavailable"));
+        assert_eq!(
+            d.usage.as_ref().unwrap().seven_day.as_ref().unwrap().pct,
+            63.0
+        );
+        assert_eq!(d.usage_age_seconds, Some(16875.8));
+        assert!(!list.accounts[0].stale, "a fresh reading is left alone");
+        assert!(list.accounts[2].usage.is_none(), "nothing to fall back to");
+    }
+
+    #[test]
+    fn duplicate_slots_come_from_the_warnings() {
+        let list: AccountList = serde_json::from_str(
+            r#"{"accounts": [], "duplicateAccountWarnings": [
+                "Account-1 and Account-2 hold the same credential (b@x.com) — one slot's backup was overwritten.",
+                "Account-2 and Account-12 both authenticate as b@x.com — remove or re-login one of them."
+            ]}"#,
+        )
+        .unwrap();
+        assert_eq!(list.duplicate_slots(), [1, 2, 12]);
+    }
+
+    #[test]
+    fn strips_colour_codes() {
+        assert_eq!(
+            strip_ansi("\u{1b}[33mSlot 2\u{1b}[0m taken"),
+            "Slot 2 taken"
+        );
+    }
+
+    #[test]
+    fn status_labels_and_relogin() {
+        let mut a = Account {
+            usage_status: Some("foreign_credential".into()),
+            ..Default::default()
+        };
+        assert!(a.needs_login());
+        assert_eq!(
+            a.status_label().as_deref(),
+            Some("saved login belongs to another account")
+        );
+        a.usage_status = Some("unavailable".into());
+        assert!(!a.needs_login());
+        a.usage_status = Some("ok".into());
+        assert_eq!(a.status_label(), None);
     }
 }

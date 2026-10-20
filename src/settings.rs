@@ -3,6 +3,8 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+use crate::i18n::l;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TitleMode {
     /// Icon only
@@ -17,7 +19,7 @@ impl TitleMode {
     pub const ALL: [TitleMode; 3] = [TitleMode::Off, TitleMode::FiveHour, TitleMode::Both];
     pub fn label(self) -> &'static str {
         match self {
-            TitleMode::Off => "Icon only",
+            TitleMode::Off => l("Icon only", "Yalnızca ikon"),
             TitleMode::FiveHour => "5h",
             TitleMode::Both => "5h · 7d",
         }
@@ -34,14 +36,14 @@ impl PercentMode {
     pub const ALL: [PercentMode; 2] = [PercentMode::Remaining, PercentMode::Used];
     pub fn label(self) -> &'static str {
         match self {
-            PercentMode::Remaining => "Remaining",
-            PercentMode::Used => "Used",
+            PercentMode::Remaining => l("Remaining", "Kalan"),
+            PercentMode::Used => l("Used", "Kullanılan"),
         }
     }
     pub fn suffix(self) -> &'static str {
         match self {
-            PercentMode::Remaining => "left",
-            PercentMode::Used => "used",
+            PercentMode::Remaining => l("left", "kaldı"),
+            PercentMode::Used => l("used", "kullanıldı"),
         }
     }
     /// Value to display for a window reporting `used` percent.
@@ -49,6 +51,25 @@ impl PercentMode {
         match self {
             PercentMode::Remaining => (100.0 - used).clamp(0.0, 100.0),
             PercentMode::Used => used.clamp(0.0, 100.0),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Language {
+    System,
+    English,
+    Turkish,
+}
+
+impl Language {
+    pub const ALL: [Language; 3] = [Language::System, Language::English, Language::Turkish];
+    pub fn label(self) -> &'static str {
+        match self {
+            Language::System => l("System", "Sistem"),
+            // each language in its own name
+            Language::English => "English",
+            Language::Turkish => "Türkçe",
         }
     }
 }
@@ -64,9 +85,9 @@ impl Theme {
     pub const ALL: [Theme; 3] = [Theme::System, Theme::Light, Theme::Dark];
     pub fn label(self) -> &'static str {
         match self {
-            Theme::System => "System",
-            Theme::Light => "Light",
-            Theme::Dark => "Dark",
+            Theme::System => l("System", "Sistem"),
+            Theme::Light => l("Light", "Açık"),
+            Theme::Dark => l("Dark", "Koyu"),
         }
     }
 }
@@ -75,12 +96,15 @@ impl Theme {
 #[serde(default)]
 pub struct Prefs {
     pub theme: Theme,
+    pub language: Language,
     pub title_mode: TitleMode,
     pub percent_mode: PercentMode,
     pub show_usage: bool,
     pub show_seven_day: bool,
     pub show_model_limits: bool,
     pub show_reset_times: bool,
+    /// Mark windows used faster than their pace and say when they would run out.
+    pub show_pace: bool,
     /// Account slot numbers hidden from the popover (still switchable via cswap).
     pub hidden_accounts: Vec<u32>,
     pub accounts_refresh_secs: u64,
@@ -89,6 +113,8 @@ pub struct Prefs {
     /// Remaining percentage at which a window counts as low (notifications, switch suggestion).
     pub low_quota_pct: u32,
     pub notify_low: bool,
+    /// Warn when the current account's pace runs a window out before it resets.
+    pub notify_pace: bool,
     pub notify_reset: bool,
     pub check_updates: bool,
     pub hotkeys: bool,
@@ -98,18 +124,21 @@ impl Default for Prefs {
     fn default() -> Self {
         Prefs {
             theme: Theme::System,
+            language: Language::System,
             title_mode: TitleMode::FiveHour,
             percent_mode: PercentMode::Remaining,
             show_usage: true,
             show_seven_day: true,
             show_model_limits: true,
             show_reset_times: true,
+            show_pace: true,
             hidden_accounts: Vec::new(),
             accounts_refresh_secs: 60,
             usage_refresh_secs: 120,
             launch_at_login: false,
             low_quota_pct: 15,
             notify_low: true,
+            notify_pace: true,
             notify_reset: true,
             check_updates: true,
             hotkeys: true,
@@ -206,7 +235,7 @@ mod tests {
         assert_eq!(p.theme, Theme::Dark);
         assert!(p.is_hidden(3));
         assert_eq!(p.low_quota_pct, 15);
-        assert!(p.notify_low && p.check_updates && p.hotkeys);
+        assert!(p.notify_low && p.notify_pace && p.show_pace && p.check_updates && p.hotkeys);
         assert_eq!(p.accounts_refresh_secs, 60);
     }
 

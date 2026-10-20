@@ -153,7 +153,7 @@ pub fn init(on_action: Box<dyn Fn(Action)>) {
 
         let action: id = msg_send![class!(UNNotificationAction),
             actionWithIdentifier: ns(SWITCH_ACTION)
-            title: ns("Switch")
+            title: ns(crate::i18n::l("Switch", "Geç"))
             options: 0usize];
         let actions: id = msg_send![class!(NSArray), arrayWithObject: action];
         let empty: id = msg_send![class!(NSArray), array];

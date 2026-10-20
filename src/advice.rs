@@ -4,7 +4,9 @@
 
 use std::collections::HashMap;
 
-use crate::cswap::{Account, AccountList};
+use chrono::{DateTime, Local, Utc};
+
+use crate::cswap::{Account, AccountList, Window};
 use crate::settings::Prefs;
 
 /// A target must have at least this many more points of headroom than the current
@@ -37,6 +39,35 @@ pub fn best_other<'a>(list: &'a AccountList, prefs: &Prefs) -> Option<(&'a Accou
         .max_by(|a, b| a.1.total_cmp(&b.1))
 }
 
+/// A pace warning re-fires only for a window whose reset moved by more than this.
+const NEW_WINDOW_MINUTES: i64 = 30;
+
+fn parse_time(s: &Option<String>) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(s.as_deref()?)
+        .ok()
+        .map(|t| t.with_timezone(&Utc))
+}
+
+/// When `w` runs out at the current pace, if that comes before its reset.
+pub fn runs_out(w: &Window, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
+    if w.will_last_to_reset != Some(false) || w.pct >= 100.0 {
+        return None;
+    }
+    let out = parse_time(&w.projected_exhaustion_at)?;
+    let before_reset = parse_time(&w.resets_at).is_none_or(|reset| out < reset);
+    (out > now && before_reset).then_some(out)
+}
+
+/// "17:40" today, "Oct 22 09:04" otherwise, in local time like cswap's reset clocks.
+pub fn local_clock(t: DateTime<Utc>, now: DateTime<Utc>) -> String {
+    let (t, now) = (t.with_timezone(&Local), now.with_timezone(&Local));
+    if t.date_naive() == now.date_naive() {
+        t.format("%H:%M").to_string()
+    } else {
+        t.format("%b %-d %H:%M").to_string()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Suggestion {
     pub number: u32,
@@ -52,6 +83,11 @@ pub fn suggestion(list: &AccountList, prefs: &Prefs) -> Option<Suggestion> {
     if current > prefs.low_quota_pct as f64 {
         return None;
     }
+    switch_target(list, prefs, current)
+}
+
+/// The best other account, if it has clearly more room than `current`.
+fn switch_target(list: &AccountList, prefs: &Prefs, current: f64) -> Option<Suggestion> {
     let (acc, h) = best_other(list, prefs)?;
     (h >= current + MIN_GAIN).then(|| Suggestion {
         number: acc.number,
@@ -70,6 +106,16 @@ pub enum Event {
         left: f64,
         suggestion: Option<Suggestion>,
     },
+    /// At its current pace the current account's `window` runs out before it resets.
+    Pace {
+        email: String,
+        window: &'static str,
+        left: f64,
+        runs_out: DateTime<Utc>,
+        /// cswap's local reset clock ("22:00", "Oct 21 06:00").
+        resets: Option<String>,
+        suggestion: Option<Suggestion>,
+    },
     /// An account whose `window` had run low has quota again.
     Reset {
         number: u32,
@@ -84,12 +130,19 @@ pub enum Event {
 #[derive(Debug, Default)]
 pub struct Watch {
     last: HashMap<(u32, &'static str), f64>,
+    /// Windows already warned about, with their reset time in minutes (0 if unknown).
+    paced: HashMap<(u32, &'static str), i64>,
+    primed: bool,
 }
 
 impl Watch {
     /// Compare a fresh account list with the previous one. The first list only sets the
     /// baseline: quota that was already low at launch is not news.
     pub fn update(&mut self, list: &AccountList, prefs: &Prefs) -> Vec<Event> {
+        self.update_at(list, prefs, Utc::now())
+    }
+
+    fn update_at(&mut self, list: &AccountList, prefs: &Prefs, now: DateTime<Utc>) -> Vec<Event> {
         let low_used = 100.0 - prefs.low_quota_pct as f64;
         let mut events = Vec::new();
         let mut next = HashMap::new();
@@ -108,10 +161,13 @@ impl Watch {
                 let Some(w) = w else { continue };
                 let key = (acc.number, window);
                 next.insert(key, w.pct);
+                let left = (100.0 - w.pct).clamp(0.0, 100.0);
+                if acc.active && left > prefs.low_quota_pct as f64 {
+                    self.check_pace(acc, window, w, left, now, prefs, list, &mut events);
+                }
                 let Some(&prev) = self.last.get(&key) else {
                     continue;
                 };
-                let left = (100.0 - w.pct).clamp(0.0, 100.0);
                 if acc.active && prefs.notify_low && prev < low_used && w.pct >= low_used {
                     events.push(Event::Low {
                         email: acc.email.clone(),
@@ -136,7 +192,46 @@ impl Watch {
             }
         }
         self.last = next;
+        self.primed = true;
         events
+    }
+
+    /// One `Pace` event per window cycle; while priming, only remember the window.
+    #[allow(clippy::too_many_arguments)]
+    fn check_pace(
+        &mut self,
+        acc: &Account,
+        window: &'static str,
+        w: &Window,
+        left: f64,
+        now: DateTime<Utc>,
+        prefs: &Prefs,
+        list: &AccountList,
+        events: &mut Vec<Event>,
+    ) {
+        let Some(out) = runs_out(w, now) else {
+            return;
+        };
+        let reset = parse_time(&w.resets_at).map_or(0, |t| t.timestamp() / 60);
+        let key = (acc.number, window);
+        if self
+            .paced
+            .get(&key)
+            .is_some_and(|&seen| (seen - reset).abs() <= NEW_WINDOW_MINUTES)
+        {
+            return;
+        }
+        self.paced.insert(key, reset);
+        if self.primed && prefs.notify_pace {
+            events.push(Event::Pace {
+                email: acc.email.clone(),
+                window,
+                left,
+                runs_out: out,
+                resets: w.clock.clone(),
+                suggestion: switch_target(list, prefs, headroom(acc).unwrap_or(left)),
+            });
+        }
     }
 }
 
@@ -170,6 +265,7 @@ mod tests {
         AccountList {
             active_account_number: accounts.iter().find(|a| a.active).map(|a| a.number),
             accounts,
+            ..Default::default()
         }
     }
 
@@ -352,5 +448,118 @@ mod tests {
         w.update(&list(vec![a.clone()]), &p);
         a.usage.as_mut().unwrap().five_hour.as_mut().unwrap().pct = 0.0;
         assert!(w.update(&list(vec![a]), &p).is_empty());
+    }
+
+    fn paced(number: u32, active: bool, used: f64, out: &str) -> Account {
+        let mut a = acc(number, active, used, None);
+        let w = a.usage.as_mut().unwrap().five_hour.as_mut().unwrap();
+        w.will_last_to_reset = Some(false);
+        w.projected_exhaustion_at = Some(out.into());
+        w.resets_at = Some("2026-10-20T15:00:00+00:00".into());
+        w.clock = Some("18:00".into());
+        a
+    }
+
+    fn at(s: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc)
+    }
+
+    #[test]
+    fn runs_out_needs_a_future_projection_before_the_reset() {
+        let now = at("2026-10-20T12:00:00Z");
+        let a = paced(1, true, 40.0, "2026-10-20T13:30:00Z");
+        let w = a.usage.as_ref().unwrap().five_hour.clone().unwrap();
+        assert_eq!(runs_out(&w, now), Some(at("2026-10-20T13:30:00Z")));
+        let mut lasts = w.clone();
+        lasts.will_last_to_reset = Some(true);
+        assert_eq!(runs_out(&lasts, now), None);
+        let mut after_reset = w.clone();
+        after_reset.projected_exhaustion_at = Some("2026-10-20T16:00:00Z".into());
+        assert_eq!(runs_out(&after_reset, now), None);
+        assert_eq!(
+            runs_out(&w, at("2026-10-20T14:00:00Z")),
+            None,
+            "already past"
+        );
+        let mut empty = w;
+        empty.pct = 100.0;
+        assert_eq!(runs_out(&empty, now), None);
+    }
+
+    #[test]
+    fn pace_fires_once_per_window_for_the_current_account() {
+        let p = prefs();
+        let now = at("2026-10-20T12:00:00Z");
+        let mut w = Watch::default();
+        let calm = list(vec![acc(1, true, 30.0, None), acc(2, false, 0.0, None)]);
+        assert!(w.update_at(&calm, &p, now).is_empty());
+
+        let hot = list(vec![
+            paced(1, true, 40.0, "2026-10-20T13:30:00Z"),
+            paced(2, false, 40.0, "2026-10-20T13:30:00Z"),
+        ]);
+        let events = w.update_at(&hot, &p, now);
+        assert_eq!(events.len(), 1, "only the current account: {events:?}");
+        match &events[0] {
+            Event::Pace {
+                email,
+                window,
+                left,
+                runs_out,
+                resets,
+                suggestion,
+            } => {
+                assert_eq!(
+                    (email.as_str(), *window, *left),
+                    ("a1@example.com", "5h", 60.0)
+                );
+                assert_eq!(*runs_out, at("2026-10-20T13:30:00Z"));
+                assert_eq!(resets.as_deref(), Some("18:00"));
+                assert!(suggestion.is_none(), "account 2 is no better");
+            }
+            e => panic!("unexpected {e:?}"),
+        }
+        assert!(
+            w.update_at(&hot, &p, now).is_empty(),
+            "same window, no repeat"
+        );
+
+        let mut next = paced(1, true, 40.0, "2026-10-20T18:30:00Z");
+        let nw = next.usage.as_mut().unwrap().five_hour.as_mut().unwrap();
+        nw.resets_at = Some("2026-10-20T20:00:00+00:00".into());
+        assert_eq!(
+            w.update_at(&list(vec![next]), &p, now).len(),
+            1,
+            "a new window warns again"
+        );
+    }
+
+    #[test]
+    fn pace_is_quiet_at_launch_when_low_or_switched_off() {
+        let now = at("2026-10-20T12:00:00Z");
+        let hot = list(vec![paced(1, true, 40.0, "2026-10-20T13:30:00Z")]);
+        let mut w = Watch::default();
+        assert!(
+            w.update_at(&hot, &prefs(), now).is_empty(),
+            "already pacing at launch"
+        );
+
+        let mut w = Watch::default();
+        w.update_at(&list(vec![acc(1, true, 0.0, None)]), &prefs(), now);
+        let low = list(vec![paced(1, true, 90.0, "2026-10-20T13:30:00Z")]);
+        assert!(
+            !w.update_at(&low, &prefs(), now)
+                .iter()
+                .any(|e| matches!(e, Event::Pace { .. })),
+            "the low warning covers it"
+        );
+
+        let mut w = Watch::default();
+        w.update_at(&list(vec![acc(1, true, 0.0, None)]), &prefs(), now);
+        let off = Prefs {
+            notify_pace: false,
+            ..prefs()
+        };
+        assert!(w.update_at(&hot, &off, now).is_empty());
     }
 }
