@@ -2,11 +2,15 @@ mod advice;
 mod assets;
 mod attribution;
 mod cswap;
+mod dialog;
 mod hotkey;
+mod i18n;
 mod notify;
+mod onboarding;
 mod pricing;
 mod settings;
 mod settings_ui;
+mod setup;
 mod statusbar;
 mod theme;
 mod ui;
@@ -21,6 +25,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use i18n::l;
 use pricing::PriceBook;
 use settings::{Prefs, TitleMode};
 use usage::{Period, Rec, Summary};
@@ -91,6 +96,9 @@ pub struct Globals {
     pub status: Rc<statusbar::StatusItem>,
     pub window: Option<WindowHandle<ui::Root>>,
     pub settings_window: Option<WindowHandle<settings_ui::SettingsRoot>>,
+    pub setup_window: Option<WindowHandle<onboarding::SetupRoot>>,
+    /// Whether the first account list has been checked for a missing setup.
+    pub setup_checked: bool,
     /// Last time the status item toggled the popover (debounces repeated clicks).
     pub last_toggle: Option<Instant>,
     /// Last time the popover closed by itself (outside click or losing focus).
@@ -155,6 +163,7 @@ fn main() {
         .run(|cx: &mut App| {
             let state = cx.new(|_| AppState::new());
             theme::apply(state.read(cx).prefs.theme);
+            i18n::set(state.read(cx).prefs.language);
 
             // AppKit calls these from inside its own event handling, sometimes while gpui
             // is mid-update. Run them on gpui's next main-thread tick instead of inline,
@@ -191,6 +200,8 @@ fn main() {
                 status,
                 window: None,
                 settings_window: None,
+                setup_window: None,
+                setup_checked: false,
                 last_toggle: None,
                 last_dismiss: None,
                 watch: advice::Watch::default(),
@@ -235,6 +246,14 @@ fn main() {
 
             if std::env::var("SWAPBAR_SETTINGS").is_ok() {
                 open_settings(cx);
+            }
+            match std::env::var("SWAPBAR_SETUP").as_deref() {
+                Ok("add") => onboarding::open(cx, onboarding::Entry::AddAccount),
+                Ok(n) if n.parse::<u32>().is_ok() => {
+                    onboarding::open(cx, onboarding::Entry::Relogin(n.parse().unwrap()))
+                }
+                Ok(_) => onboarding::open(cx, onboarding::Entry::Welcome),
+                Err(_) => {}
             }
             if std::env::var("SWAPBAR_OPEN").is_ok() {
                 // give the status item a layout pass before measuring it
@@ -330,9 +349,116 @@ pub fn refresh_accounts(cx: &mut App) {
         let _ = cx.update(|cx| {
             update_title(cx);
             notify_quota_changes(cx);
+            offer_setup_once(cx);
         });
     })
     .detach();
+}
+
+/// After the first account list: open the setup window when cswap is missing or has
+/// no accounts, since the menu would have nothing to show.
+fn offer_setup_once(cx: &mut App) {
+    let g = cx.global_mut::<Globals>();
+    if g.setup_checked {
+        return;
+    }
+    g.setup_checked = true;
+    let state = g.state.clone();
+    let state = state.read(cx);
+    let missing = match &state.accounts {
+        Some(list) => list.accounts.is_empty(),
+        None => setup::find(setup::Tool::Cswap).is_none(),
+    };
+    if missing && cx.global::<Globals>().setup_window.is_none() {
+        onboarding::open(cx, onboarding::Entry::Welcome);
+    }
+}
+
+/// Run an account command in the background, then reload the list; failures show in
+/// the accounts error line.
+fn account_command(cx: &mut App, f: impl FnOnce() -> Result<(), String> + Send + 'static) {
+    let state = cx.global::<Globals>().state.clone();
+    cx.spawn(async move |cx: &mut AsyncApp| {
+        let result = cx.background_executor().spawn(async move { f() }).await;
+        let _ = state.update(cx, |s, cx| {
+            s.accounts_error = result.err();
+            cx.notify();
+        });
+        let _ = cx.update(refresh_accounts);
+    })
+    .detach();
+}
+
+pub fn remove_account(cx: &mut App, number: u32) {
+    let Some(acc) = account(cx, number) else {
+        return;
+    };
+    let alert = dialog::Alert::confirm(
+        lf!("Remove {}?", "{} kaldırılsın mı?", acc.email),
+        lf!(
+            "cswap deletes the login it saved for account {number}. Claude Code itself stays signed in to whatever account it uses now. You can add the account again later.",
+            "cswap, {number} numaralı hesap için sakladığı girişi siler. Claude Code şu an hangi hesaptaysa onda kalır. Hesabı daha sonra yeniden ekleyebilirsin."
+        ),
+        l("Remove", "Kaldır"),
+    )
+    .destructive();
+    dialog::ask(cx, alert, move |answer, cx| {
+        if answer.is_some() {
+            account_command(cx, move || cswap::remove(number));
+        }
+    });
+}
+
+pub fn rename_account(cx: &mut App, number: u32) {
+    let Some(acc) = account(cx, number) else {
+        return;
+    };
+    let alert = dialog::Alert::confirm(
+        lf!("Name for {}", "{} için ad", acc.email),
+        l(
+            "A short alias shows in place of the email. cswap also accepts it in commands, e.g. `cswap switch work`. Leave empty to remove it.",
+            "Kısa bir takma ad e-postanın yerine görünür. cswap komutlarda da kabul eder, örneğin `cswap switch is`. Kaldırmak için boş bırak.",
+        ),
+        l("Save", "Kaydet"),
+    )
+    .with_input(acc.alias.clone().unwrap_or_default(), l("work, personal…", "iş, kişisel…"));
+    dialog::ask(cx, alert, move |answer, cx| {
+        let Some(alias) = answer else { return };
+        let alias = alias.trim().to_string();
+        account_command(cx, move || {
+            cswap::set_alias(number, (!alias.is_empty()).then_some(alias.as_str()))
+        });
+    });
+}
+
+/// Swap an account with its neighbour in slot order (`up` = towards slot 1).
+pub fn move_account(cx: &mut App, number: u32, up: bool) {
+    let state = cx.global::<Globals>().state.read(cx);
+    let Some(list) = &state.accounts else { return };
+    let mut slots: Vec<u32> = list.accounts.iter().map(|a| a.number).collect();
+    slots.sort_unstable();
+    let Some(i) = slots.iter().position(|&n| n == number) else {
+        return;
+    };
+    let other = if up {
+        i.checked_sub(1).map(|j| slots[j])
+    } else {
+        slots.get(i + 1).copied()
+    };
+    if let Some(other) = other {
+        account_command(cx, move || cswap::swap_slots(number, other));
+    }
+}
+
+fn account(cx: &App, number: u32) -> Option<cswap::Account> {
+    let state = cx.global::<Globals>().state.read(cx);
+    state
+        .accounts
+        .as_ref()?
+        .accounts
+        .iter()
+        .find(|a| a.number == number)
+        .cloned()
 }
 
 /// Post notifications for quota changes since the previous poll.
@@ -351,18 +477,64 @@ fn notify_quota_changes(cx: &mut App) {
                 left,
                 suggestion,
             } => {
-                let title = format!("{window} quota low: {left:.0}% left");
+                let title = lf!(
+                    "{window} quota low: {left:.0}% left",
+                    "{window} kotası azaldı: %{left:.0} kaldı"
+                );
                 let (body, target) = match suggestion {
                     Some(s) => (
-                        format!(
+                        lf!(
                             "{email} is running out. {} has {:.0}% left.",
-                            s.email, s.headroom
+                            "{email} tükenmek üzere. {} hesabında %{:.0} kaldı.",
+                            s.email,
+                            s.headroom
                         ),
                         Some(s.number),
                     ),
-                    None => (format!("{email} is running out."), None),
+                    None => (
+                        lf!("{email} is running out.", "{email} tükenmek üzere."),
+                        None,
+                    ),
                 };
                 notify::post(&format!("low-{window}"), &title, &body, target);
+            }
+            advice::Event::Pace {
+                email,
+                window,
+                left,
+                runs_out,
+                resets,
+                suggestion,
+            } => {
+                let at = i18n::time(&advice::local_clock(runs_out, chrono::Utc::now()));
+                let title = lf!(
+                    "{window} quota won't last: runs out around {at}",
+                    "{window} kotası yetmeyecek: {at} civarında biter"
+                );
+                let mut body = match resets.as_deref().map(i18n::time) {
+                    Some(r) => lf!(
+                        "{email} has {left:.0}% left, but at this pace it runs out before its {r} reset.",
+                        "{email} hesabında %{left:.0} kaldı, ama bu tempoyla {r} sıfırlanmasından önce biter."
+                    ),
+                    None => lf!(
+                        "{email} has {left:.0}% left, but at this pace it runs out.",
+                        "{email} hesabında %{left:.0} kaldı, ama bu tempoyla biter."
+                    ),
+                };
+                if let Some(s) = &suggestion {
+                    body.push_str(&lf!(
+                        " {} has {:.0}% left.",
+                        " {} hesabında %{:.0} kaldı.",
+                        s.email,
+                        s.headroom
+                    ));
+                }
+                notify::post(
+                    &format!("pace-{window}"),
+                    &title,
+                    &body,
+                    suggestion.map(|s| s.number),
+                );
             }
             advice::Event::Reset {
                 number,
@@ -373,8 +545,11 @@ fn notify_quota_changes(cx: &mut App) {
                 let active = list.active_account_number == Some(number);
                 notify::post(
                     &format!("reset-{number}-{window}"),
-                    "Quota available again",
-                    &format!("{email}: the {window} window reset, {left:.0}% left."),
+                    l("Quota available again", "Kota yeniden kullanılabilir"),
+                    &lf!(
+                        "{email}: the {window} window reset, {left:.0}% left.",
+                        "{email}: {window} penceresi sıfırlandı, %{left:.0} kaldı."
+                    ),
                     (!active).then_some(number),
                 );
             }
@@ -423,8 +598,13 @@ pub fn check_for_updates(cx: &mut App, manual: bool) {
                 Ok(found) => {
                     if manual {
                         s.update_message = Some(match &found {
-                            Some(r) => format!("Version {} is available.", r.version),
-                            None => format!("{APP_NAME} {APP_VERSION} is the latest version."),
+                            Some(r) => {
+                                lf!("Version {} is available.", "{} sürümü çıktı.", r.version)
+                            }
+                            None => lf!(
+                                "{APP_NAME} {APP_VERSION} is the latest version.",
+                                "{APP_NAME} {APP_VERSION} en güncel sürüm."
+                            ),
                         });
                     }
                     s.update = found;
@@ -432,7 +612,10 @@ pub fn check_for_updates(cx: &mut App, manual: bool) {
                 Err(e) => {
                     debug_log(format_args!("update check failed: {e}"));
                     if manual {
-                        s.update_message = Some(format!("Could not check for updates: {e}"));
+                        s.update_message = Some(lf!(
+                            "Could not check for updates: {e}",
+                            "Güncellemeler kontrol edilemedi: {e}"
+                        ));
                     }
                 }
             }
@@ -475,10 +658,15 @@ pub fn switch_account(cx: &mut App, number: u32) {
                     .map(|a| (a.email.clone(), advice::headroom(a)));
                 if let Some((email, left)) = target {
                     let body = match left {
-                        Some(h) => format!("{h:.0}% quota left."),
-                        None => "Quota not known yet.".to_string(),
+                        Some(h) => lf!("{h:.0}% quota left.", "%{h:.0} kota kaldı."),
+                        None => l("Quota not known yet.", "Kota henüz bilinmiyor.").to_string(),
                     };
-                    notify::post("switched", &format!("Switched to {email}"), &body, None);
+                    notify::post(
+                        "switched",
+                        &lf!("Switched to {email}", "{email} hesabına geçildi"),
+                        &body,
+                        None,
+                    );
                 }
             }
             refresh_accounts(cx);
@@ -546,6 +734,7 @@ pub fn update_prefs(cx: &mut App, f: impl FnOnce(&mut Prefs)) {
     let state = cx.global::<Globals>().state.clone();
     state.update(cx, |s, cx| {
         f(&mut s.prefs);
+        i18n::set(s.prefs.language);
         s.prefs.save();
         cx.notify();
     });
@@ -640,7 +829,7 @@ pub fn open_settings(cx: &mut App) {
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
             titlebar: Some(gpui::TitlebarOptions {
-                title: Some(format!("{APP_NAME} Settings").into()),
+                title: Some(lf!("{APP_NAME} Settings", "{APP_NAME} Ayarları").into()),
                 appears_transparent: true,
                 traffic_light_position: Some(point(px(12.0), px(12.0))),
             }),

@@ -26,14 +26,17 @@ Swapbar shows the 5h, 7d and per-model (Fable) quotas of every cswap account at 
 
 ## Features
 
-- **All accounts, one glance.** Each account shows its plan (Max 20x, Max 5x, Pro, Team Premium/Standard) and gets 5h, 7d and per-model (Fable) bars with time to reset. The bars turn yellow at 40% left and red at 15%.
+- **Setup assistant.** On first run Swapbar checks for Claude Code and claude-swap, installs claude-swap if it's missing (with `uv`, installing `uv` too if needed), and adds your accounts one by one: each signs in through `claude auth login` in the browser, cswap saves the login, and Claude Code switches back to the account it was using.
+- **All accounts, one glance. Each account shows its plan (Max 20x, Max 5x, Pro, Team Premium/Standard) and gets 5h, 7d and per-model (Fable) bars with time to reset. The bars turn yellow at 40% left and red at 15%.
 - **One-click switching.** Click an inactive account to run `cswap switch`. The active account is marked **current**, and accounts left out of auto-rotation show as **paused**.
-- **Switch suggestion.** When the current account's tightest window drops to the low-quota level (15% left by default), a banner names the account with the most room and switches to it in one click. That account is also marked **suggested** in the list.
+- **Pace warnings.** A marker on a bar shows where an even pace would be when an account is using a window too fast, and the row says when the window would run out if that comes before its reset. A notification warns about the current account once per window.
+- **Switch suggestion. When the current account's tightest window drops to the low-quota level (15% left by default), a banner names the account with the most room and switches to it in one click. That account is also marked **suggested** in the list.
 - **Notifications.** A notification when the current account runs low, with a **Switch** button for the best other account, and another when a depleted account's quota resets.
 - **Global shortcuts.** `⌃⌥S` opens Swapbar from any app; `⌃⌥⇧S` switches to the account with the most quota left. No Accessibility permission needed.
 - **Update check.** Swapbar checks GitHub for a new release at launch and every 6 hours and shows a **Download** banner when one is out.
 - **Quota in the menu bar.** The Swapbar icon is followed by the active account's quota, as `5h` or `5h · 7d`, shown as remaining or used.
 - **Token and cost summary.** Today and 30-day totals for cost, tokens, requests, output and cache reads, cost per account (worked out from cswap's switch log, `cswap run` sessions and each profile's login) and per model, and a bar splitting input, cache read, cache write and output.
+- **English and Turkish.** Follows the macOS language, or pick one in Settings › General.
 - **Light and dark.** Follows the macOS appearance, or set it to Light or Dark in Settings.
 - **Small and native.** Rust and [gpui](https://crates.io/crates/gpui) (Zed's UI framework), a universal binary for Apple Silicon and Intel, about 4 MB.
 
@@ -47,7 +50,7 @@ Open **Settings…** from the popover. Preferences are stored in `~/.config/swap
     <td width="50%"><img src="docs/screenshots/settings-menubar.png" alt="Menu Bar settings"></td>
   </tr>
   <tr>
-    <td><b>General:</b> theme (System / Light / Dark), launch at login (LaunchAgent), refresh intervals, show or hide the usage section.</td>
+    <td><b>General:</b> theme (System / Light / Dark), language (System / English / Türkçe), launch at login (LaunchAgent), refresh intervals, show or hide the usage section.</td>
     <td><b>Menu Bar:</b> percentage mode (remaining / used), title next to the icon (icon only / 5h / 5h · 7d), 7-day window, per-model limits, reset times.</td>
   </tr>
   <tr>
@@ -55,7 +58,7 @@ Open **Settings…** from the popover. Preferences are stored in `~/.config/swap
     <td><img src="docs/screenshots/settings-auto.png" alt="Auto-switch settings"></td>
   </tr>
   <tr>
-    <td><b>Accounts:</b> show or hide each account in the menu, include it in auto-rotation (<code>cswap enable/disable</code>).</td>
+    <td><b>Accounts:</b> add an account, rename (<code>cswap alias</code>), reorder (<code>cswap swap</code>), sign a broken login in again, remove; show or hide each account in the menu, include it in auto-rotation (<code>cswap enable/disable</code>).</td>
     <td><b>Auto-switch:</b> cswap's <code>autoswitch.*</code> settings (<code>cswap config set</code>), reset to defaults. These only take effect while <code>cswap auto</code> is running.</td>
   </tr>
 </table>
@@ -68,15 +71,14 @@ Open **Settings…** from the popover. Preferences are stored in `~/.config/swap
 brew install --cask afatmustafa/tap/swapbar
 ```
 
-The cask installs Swapbar into Applications; `brew upgrade --cask swapbar` updates it. You still need [`claude-swap`](https://github.com/realiti4/claude-swap) with your accounts added.
+The cask installs Swapbar into Applications; `brew upgrade --cask swapbar` updates it. On first launch the setup assistant installs [`claude-swap`](https://github.com/realiti4/claude-swap) if needed and adds your accounts.
 
 ### Download
 
-1. Install [`claude-swap`](https://github.com/realiti4/claude-swap) and add your accounts with `cswap add`.
-2. Download `Swapbar.dmg` from the [latest release](https://github.com/afatmustafa/swapbar/releases/latest) and drag Swapbar to Applications.
-3. Open Swapbar. Its icon appears in the menu bar; click it to open the popover.
+1. Download `Swapbar.dmg` from the [latest release](https://github.com/afatmustafa/swapbar/releases/latest) and drag Swapbar to Applications.
+2. Open Swapbar. Its icon appears in the menu bar, and the setup assistant opens if claude-swap or your accounts are missing. It needs [Claude Code](https://claude.com/claude-code) to sign in to accounts.
 
-Swapbar looks for `cswap` at `~/.local/bin/cswap`, `/opt/homebrew/bin/cswap` and `/usr/local/bin/cswap`. Set `CSWAP_BIN` to use another path.
+Swapbar looks for `cswap` at `~/.local/bin/cswap`, `/opt/homebrew/bin/cswap` and `/usr/local/bin/cswap`. Set `CSWAP_BIN` to use another path (`CLAUDE_BIN` and `UV_BIN` work the same way for `claude` and `uv`).
 
 Releases from 0.1.1 on are signed with a Developer ID and notarized by Apple, so Swapbar opens with a double-click. Version 0.1.0 is not: macOS blocks its first launch, and you allow it with **Open Anyway** under System Settings → Privacy & Security.
 
@@ -130,7 +132,12 @@ The popover and settings screenshots use demo accounts and generated transcripts
 
 - `src/main.rs`: app state, timers, window open/close, menu bar title
 - `src/statusbar.rs`: NSStatusItem (cocoa), click callback, screen geometry
-- `src/cswap.rs`: bridge to `cswap list/switch --json`
+- `src/cswap.rs`: bridge to cswap (`list`, `switch`, `add`, `remove`, `alias`, `swap`)
+- `src/setup.rs`: finding `claude`/`cswap`/`uv`/`brew`, installing claude-swap, `claude auth login`
+- `src/onboarding.rs`: setup assistant window
+- `src/i18n.rs`: English/Turkish strings (`l()`, `lf!`) and cswap time strings in Turkish
+- `src/dialog.rs`: native NSAlert confirmations and text prompts
+- `src/advice.rs`: switch suggestion, pace, notification events
 - `src/usage.rs`: JSONL scanner, cache, period summaries
 - `src/pricing.rs`: model prices
 - `src/assets.rs`: embedded SVG icons (AssetSource)

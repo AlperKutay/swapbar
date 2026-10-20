@@ -7,30 +7,33 @@ use gpui::{
 
 use crate::assets::icon;
 use crate::cswap::ConfigList;
-use crate::settings::{PercentMode, Prefs, Theme, TitleMode};
+use crate::i18n::l;
+use crate::lf;
+use crate::settings::{Language, PercentMode, Prefs, Theme, TitleMode};
 use crate::{APP_NAME, APP_VERSION, AppState, Globals, hotkey, notify};
 
-const UI_FONT: &str = ".AppleSystemUIFont";
+pub(crate) const UI_FONT: &str = ".AppleSystemUIFont";
 
-fn c(hex: u32) -> Hsla {
+pub(crate) fn c(hex: u32) -> Hsla {
     rgb(hex).into()
 }
 
 /// Colour palette; `t()` picks the light or dark one for the current appearance.
-struct T {
-    sidebar: u32,
-    content: u32,
-    group: u32,
-    hairline: u32,
-    hover: u32,
-    selected: u32,
-    text: u32,
-    secondary: u32,
-    tertiary: u32,
-    accent: u32,
-    switch_on: u32,
-    switch_off: u32,
-    danger: u32,
+pub(crate) struct T {
+    pub(crate) sidebar: u32,
+    pub(crate) content: u32,
+    pub(crate) group: u32,
+    pub(crate) hairline: u32,
+    pub(crate) hover: u32,
+    pub(crate) selected: u32,
+    pub(crate) text: u32,
+    pub(crate) secondary: u32,
+    pub(crate) tertiary: u32,
+    pub(crate) accent: u32,
+    pub(crate) switch_on: u32,
+    pub(crate) switch_off: u32,
+    pub(crate) danger: u32,
+    pub(crate) ok: u32,
 }
 
 const LIGHT: T = T {
@@ -47,6 +50,7 @@ const LIGHT: T = T {
     switch_on: 0x3478f6,
     switch_off: 0xd1d0cc,
     danger: 0xd93025,
+    ok: 0x248a3d,
 };
 
 const DARK: T = T {
@@ -63,9 +67,10 @@ const DARK: T = T {
     switch_on: 0x0a84ff,
     switch_off: 0x4a4a48,
     danger: 0xff5f52,
+    ok: 0x30d158,
 };
 
-fn t() -> &'static T {
+pub(crate) fn t() -> &'static T {
     if crate::theme::is_dark() {
         &DARK
     } else {
@@ -94,12 +99,12 @@ impl Page {
     ];
     fn label(self) -> &'static str {
         match self {
-            Page::General => "General",
-            Page::MenuBar => "Menu Bar",
-            Page::Notifications => "Notifications",
-            Page::Accounts => "Accounts",
-            Page::AutoSwitch => "Auto-switch",
-            Page::About => "About",
+            Page::General => l("General", "Genel"),
+            Page::MenuBar => l("Menu Bar", "Menü Çubuğu"),
+            Page::Notifications => l("Notifications", "Bildirimler"),
+            Page::Accounts => l("Accounts", "Hesaplar"),
+            Page::AutoSwitch => l("Auto-switch", "Otomatik geçiş"),
+            Page::About => l("About", "Hakkında"),
         }
     }
     fn glyph(self) -> &'static str {
@@ -149,7 +154,7 @@ impl SettingsRoot {
 
 // ---------- controls ----------
 
-fn toggle(
+pub(crate) fn toggle(
     id: impl Into<SharedString>,
     on: bool,
     on_change: impl Fn(bool, &mut App) + 'static,
@@ -260,7 +265,7 @@ fn stepper(
         .child(btn(format!("{id}-inc"), "+").on_click(move |_, _, cx| inc(1, cx)))
 }
 
-fn button(
+pub(crate) fn button(
     id: &str,
     label: &str,
     danger: bool,
@@ -280,6 +285,31 @@ fn button(
         .hover(|d| d.bg(c(t().hover)))
         .child(label.to_string())
         .on_click(move |_, _, cx| on_click(cx))
+}
+
+/// The filled accent button for a window's main action.
+pub(crate) fn primary_button(
+    id: &str,
+    label: &str,
+    enabled: bool,
+    on_click: impl Fn(&mut App) + 'static,
+) -> impl IntoElement {
+    div()
+        .id(SharedString::from(id.to_string()))
+        .px_4()
+        .py(px(5.0))
+        .rounded_md()
+        .bg(c(t().accent))
+        .text_size(px(12.0))
+        .font_weight(FontWeight::MEDIUM)
+        .text_color(c(0xffffff))
+        .when(!enabled, |d| d.opacity(0.45))
+        .when(enabled, |d| {
+            d.cursor_pointer()
+                .hover(|d| d.opacity(0.88))
+                .on_click(move |_, _, cx| on_click(cx))
+        })
+        .child(label.to_string())
 }
 
 fn link(id: &str, glyph: &str, label: &str, url: &'static str) -> impl IntoElement {
@@ -324,7 +354,7 @@ fn link(id: &str, glyph: &str, label: &str, url: &'static str) -> impl IntoEleme
 
 // ---------- layout ----------
 
-fn group(children: Vec<gpui::AnyElement>) -> impl IntoElement {
+pub(crate) fn group(children: Vec<gpui::AnyElement>) -> impl IntoElement {
     let n = children.len();
     let mut g = div()
         .flex()
@@ -344,7 +374,11 @@ fn group(children: Vec<gpui::AnyElement>) -> impl IntoElement {
     g
 }
 
-fn row(label: &str, description: Option<&str>, control: impl IntoElement) -> gpui::AnyElement {
+pub(crate) fn row(
+    label: &str,
+    description: Option<&str>,
+    control: impl IntoElement,
+) -> gpui::AnyElement {
     let mut text = div()
         .flex()
         .flex_col()
@@ -378,7 +412,7 @@ fn row(label: &str, description: Option<&str>, control: impl IntoElement) -> gpu
         .into_any_element()
 }
 
-fn heading(label: &str) -> impl IntoElement {
+pub(crate) fn heading(label: &str) -> impl IntoElement {
     div()
         .text_size(px(12.5))
         .font_weight(FontWeight::SEMIBOLD)
@@ -441,16 +475,23 @@ fn page_general(s: &AppState) -> impl IntoElement {
     div()
         .flex()
         .flex_col()
-        .child(heading("Appearance"))
+        .child(heading(l("Appearance", "Görünüm")))
+        .child(group(vec![
+            row(
+                l("Theme", "Tema"),
+                Some(l("System follows the macOS light/dark setting.", "Sistem, macOS'un açık/koyu ayarını izler.")),
+                segmented("theme", &Theme::ALL, p.theme, Theme::label, |t, cx| crate::update_prefs(cx, |p| p.theme = t)),
+            ),
+            row(
+                l("Language", "Dil"),
+                Some(l("System follows the macOS language: Turkish if it's first, otherwise English.", "Sistem, macOS dilini izler: ilk dil Türkçeyse Türkçe, değilse İngilizce.")),
+                segmented("language", &Language::ALL, p.language, Language::label, |lang, cx| crate::update_prefs(cx, |p| p.language = lang)),
+            ),
+        ]))
+        .child(heading(l("Startup", "Başlangıç")))
         .child(group(vec![row(
-            "Theme",
-            Some("System follows the macOS light/dark setting."),
-            segmented("theme", &Theme::ALL, p.theme, Theme::label, |t, cx| crate::update_prefs(cx, |p| p.theme = t)),
-        )]))
-        .child(heading("Startup"))
-        .child(group(vec![row(
-            "Launch at login",
-            Some("Installs a LaunchAgent that starts the app when you sign in."),
+            l("Launch at login", "Girişte başlat"),
+            Some(l("Installs a LaunchAgent that starts the app when you sign in.", "Mac'e giriş yaptığında uygulamayı başlatan bir LaunchAgent kurar.")),
             toggle("launch", launch, |on, cx| {
                 if let Err(e) = crate::settings::set_launch_at_login(on) {
                     eprintln!("launch agent: {e}");
@@ -458,48 +499,48 @@ fn page_general(s: &AppState) -> impl IntoElement {
                 crate::update_prefs(cx, |p| p.launch_at_login = on);
             }),
         )]))
-        .child(heading("Refresh"))
+        .child(heading(l("Refresh", "Yenileme")))
         .child(group(vec![
             row(
-                "Account quotas",
-                Some("How often to ask cswap for fresh limits. cswap itself paces the Anthropic API."),
+                l("Account quotas", "Hesap kotaları"),
+                Some(l("How often to ask cswap for fresh limits. cswap itself paces the Anthropic API.", "cswap'a ne sıklıkla güncel limit sorulacağı. Anthropic API'sinin temposunu cswap kendisi ayarlar.")),
                 stepper("acc-refresh", format!("{}s", p.accounts_refresh_secs), |d, cx| {
                     crate::update_prefs(cx, |p| p.accounts_refresh_secs = (p.accounts_refresh_secs as i64 + d * 15).clamp(15, 600) as u64)
                 }),
             ),
             row(
-                "Token & cost scan",
-                Some("How often to re-scan Claude Code transcripts. Scans are incremental."),
+                l("Token & cost scan", "Token ve maliyet taraması"),
+                Some(l("How often to re-scan Claude Code transcripts. Scans are incremental.", "Claude Code transkriptlerinin ne sıklıkla yeniden taranacağı. Taramalar artımlıdır.")),
                 stepper("usage-refresh", format!("{}s", p.usage_refresh_secs), |d, cx| {
                     crate::update_prefs(cx, |p| p.usage_refresh_secs = (p.usage_refresh_secs as i64 + d * 30).clamp(30, 1800) as u64)
                 }),
             ),
         ]))
-        .child(heading("Sections"))
+        .child(heading(l("Sections", "Bölümler")))
         .child(group(vec![row(
-            "Show token & cost usage",
-            Some("Today / 30-day totals under the account list."),
+            l("Show token & cost usage", "Token ve maliyet kullanımını göster"),
+            Some(l("Today / 30-day totals under the account list.", "Hesap listesinin altında bugün ve 30 günlük toplamlar.")),
             toggle("show-usage", p.show_usage, |on, cx| crate::update_prefs(cx, |p| p.show_usage = on)),
         )]))
-        .child(heading("Keyboard shortcuts"))
+        .child(heading(l("Keyboard shortcuts", "Klavye kısayolları")))
         .child(group(vec![
             row(
-                "Global shortcuts",
-                Some("Work from any app. Turn off if another app needs these keys."),
+                l("Global shortcuts", "Global kısayollar"),
+                Some(l("Work from any app. Turn off if another app needs these keys.", "Her uygulamada çalışır. Bu tuşlara başka bir uygulama ihtiyaç duyuyorsa kapat.")),
                 toggle("hotkeys", p.hotkeys, |on, cx| crate::update_prefs(cx, |p| p.hotkeys = on)),
             ),
-            row("Open Swapbar", None, shortcut(hotkey::TOGGLE_LABEL, p.hotkeys)),
+            row(l("Open Swapbar", "Swapbar'ı aç"), None, shortcut(hotkey::TOGGLE_LABEL, p.hotkeys)),
             row(
-                "Switch to the account with the most quota left",
+                l("Switch to the account with the most quota left", "En çok kotası kalan hesaba geç"),
                 None,
                 shortcut(hotkey::SWITCH_BEST_LABEL, p.hotkeys),
             ),
         ]))
-        .child(heading("Updates"))
+        .child(heading(l("Updates", "Güncellemeler")))
         .child(group(vec![
             row(
-                "Check for updates automatically",
-                Some("Looks for a new release on GitHub at launch and every 6 hours."),
+                l("Check for updates automatically", "Güncellemeleri otomatik kontrol et"),
+                Some(l("Looks for a new release on GitHub at launch and every 6 hours.", "Açılışta ve 6 saatte bir GitHub'da yeni sürüm arar.")),
                 toggle("check-updates", p.check_updates, |on, cx| {
                     crate::update_prefs(cx, |p| p.check_updates = on);
                     if on {
@@ -511,7 +552,7 @@ fn page_general(s: &AppState) -> impl IntoElement {
         ]))
 }
 
-fn shortcut(keys: &str, enabled: bool) -> impl IntoElement {
+pub(crate) fn shortcut(keys: &str, enabled: bool) -> impl IntoElement {
     div()
         .px_2()
         .py(px(2.0))
@@ -526,29 +567,35 @@ fn shortcut(keys: &str, enabled: bool) -> impl IntoElement {
 
 fn update_row(s: &AppState) -> gpui::AnyElement {
     let status = if s.update_checking {
-        "Checking…".to_string()
+        l("Checking…", "Kontrol ediliyor…").to_string()
     } else if let Some(m) = &s.update_message {
         m.clone()
     } else {
-        format!("You have version {APP_VERSION}.")
+        lf!(
+            "You have version {APP_VERSION}.",
+            "Sizdeki sürüm: {APP_VERSION}."
+        )
     };
     let control: gpui::AnyElement = match &s.update {
         Some(r) => {
             let url = r.url.clone();
             button(
                 "download-update",
-                &format!("Download {}", r.version),
+                &lf!("Download {}", "{} sürümünü indir", r.version),
                 false,
                 move |cx| cx.open_url(&url),
             )
             .into_any_element()
         }
-        None => button("check-update", "Check now", false, |cx| {
-            crate::check_for_updates(cx, true)
-        })
+        None => button(
+            "check-update",
+            l("Check now", "Şimdi kontrol et"),
+            false,
+            |cx| crate::check_for_updates(cx, true),
+        )
         .into_any_element(),
     };
-    row("Latest version", Some(&status), control)
+    row(l("Latest version", "Son sürüm"), Some(&status), control)
 }
 
 fn page_notifications(s: &AppState) -> impl IntoElement {
@@ -560,21 +607,21 @@ fn page_notifications(s: &AppState) -> impl IntoElement {
                 .text_size(px(11.0))
                 .text_color(c(t().danger))
                 .mt_3()
-                .child("Notifications need Swapbar to run from its app bundle (Swapbar.app)."),
+                .child(l("Notifications need Swapbar to run from its app bundle (Swapbar.app).", "Bildirimler için Swapbar'ın uygulama paketinden (Swapbar.app) çalışması gerekir.")),
         );
     }
-    col.child(heading("Quota"))
+    col.child(heading(l("Quota", "Kota")))
         .child(group(vec![
             row(
-                "Low quota at",
-                Some("A window counts as low at this much left. Swapbar then suggests the account with the most room."),
+                l("Low quota at", "Düşük kota eşiği"),
+                Some(l("A window counts as low at this much left. Swapbar then suggests the account with the most room.", "Bir pencere bu kadar kalınca düşük sayılır. Swapbar o zaman en çok yeri olan hesabı önerir.")),
                 stepper("low-pct", format!("{}%", p.low_quota_pct), |d, cx| {
                     crate::update_prefs(cx, |p| p.low_quota_pct = (p.low_quota_pct as i64 + d * 5).clamp(5, 50) as u32)
                 }),
             ),
             row(
-                "When the current account runs low",
-                Some("Once per 5h or 7d window, with a Switch button for the best other account."),
+                l("When the current account runs low", "Aktif hesabın kotası azalınca"),
+                Some(l("Once per 5h or 7d window, with a Switch button for the best other account.", "5h veya 7d penceresi başına bir kez, en uygun diğer hesap için Geç butonuyla.")),
                 toggle("notify-low", p.notify_low, |on, cx| {
                     crate::update_prefs(cx, |p| p.notify_low = on);
                     if on {
@@ -583,8 +630,18 @@ fn page_notifications(s: &AppState) -> impl IntoElement {
                 }),
             ),
             row(
-                "When an account's quota resets",
-                Some("For accounts that had run low. Paused and hidden accounts are skipped."),
+                l("When the current account won't last", "Aktif hesabın kotası yetmeyecekse"),
+                Some(l("When the 5h or 7d window would run out before it resets at your current pace. Once per window.", "Mevcut tempoyla 5h veya 7d penceresi sıfırlanmadan bitecekse. Pencere başına bir kez.")),
+                toggle("notify-pace", p.notify_pace, |on, cx| {
+                    crate::update_prefs(cx, |p| p.notify_pace = on);
+                    if on {
+                        notify::request_authorization();
+                    }
+                }),
+            ),
+            row(
+                l("When an account's quota resets", "Bir hesabın kotası sıfırlanınca"),
+                Some(l("For accounts that had run low. Paused and hidden accounts are skipped.", "Kotası azalmış hesaplar için. Duraklatılmış ve gizli hesaplar atlanır.")),
                 toggle("notify-reset", p.notify_reset, |on, cx| {
                     crate::update_prefs(cx, |p| p.notify_reset = on);
                     if on {
@@ -593,19 +650,19 @@ fn page_notifications(s: &AppState) -> impl IntoElement {
                 }),
             ),
         ]))
-        .child(heading("System"))
+        .child(heading(l("System", "Sistem")))
         .child(group(vec![
             row(
-                "Send a test notification",
-                Some("If nothing appears, allow Swapbar in System Settings › Notifications."),
+                l("Send a test notification", "Deneme bildirimi gönder"),
+                Some(l("If nothing appears, allow Swapbar in System Settings › Notifications.", "Bir şey görünmezse Sistem Ayarları › Bildirimler'de Swapbar'a izin ver.")),
                 div()
                     .flex()
                     .gap_2()
-                    .child(button("test-notify", "Send test", false, |_| {
+                    .child(button("test-notify", l("Send test", "Dene"), false, |_| {
                         notify::request_authorization();
-                        notify::post("test", "Swapbar notifications are on", "You'll hear from Swapbar when quota runs low or resets.", None);
+                        notify::post("test", l("Swapbar notifications are on", "Swapbar bildirimleri açık"), l("You'll hear from Swapbar when quota runs low or resets.", "Kota azalınca ya da sıfırlanınca Swapbar haber verecek."), None);
                     }))
-                    .child(button("open-notify-settings", "Open System Settings", false, |_| notify::open_system_settings())),
+                    .child(button("open-notify-settings", l("Open System Settings", "Sistem Ayarları'nı aç"), false, |_| notify::open_system_settings())),
             ),
         ]))
 }
@@ -615,107 +672,307 @@ fn page_menubar(s: &AppState) -> impl IntoElement {
     div()
         .flex()
         .flex_col()
-        .child(heading("Menu bar"))
+        .child(heading(l("Menu bar", "Menü çubuğu")))
         .child(group(vec![
             row(
-                "Percentage",
-                Some("Show how much quota is left, or how much has been used. Applies to the menu bar and the account list."),
+                l("Percentage", "Yüzde"),
+                Some(l("Show how much quota is left, or how much has been used. Applies to the menu bar and the account list.", "Ne kadar kota kaldığını ya da ne kadar kullanıldığını göster. Menü çubuğu ve hesap listesi için geçerli.")),
                 segmented("pct-mode", &PercentMode::ALL, p.percent_mode, PercentMode::label, |m, cx| crate::update_prefs(cx, |p| p.percent_mode = m)),
             ),
             row(
-                "Title next to the icon",
-                Some("Which windows of the current account to show in the menu bar."),
+                l("Title next to the icon", "İkonun yanındaki başlık"),
+                Some(l("Which windows of the current account to show in the menu bar.", "Aktif hesabın hangi pencerelerinin menü çubuğunda gösterileceği.")),
                 segmented("title-mode", &TitleMode::ALL, p.title_mode, TitleMode::label, |m, cx| crate::update_prefs(cx, |p| p.title_mode = m)),
             ),
         ]))
-        .child(heading("Account rows"))
+        .child(heading(l("Account rows", "Hesap satırları")))
         .child(group(vec![
-            row("Show 7-day window", None, toggle("show-7d", p.show_seven_day, |on, cx| crate::update_prefs(cx, |p| p.show_seven_day = on))),
-            row("Show per-model limits", Some("Weekly model-scoped windows such as Fable."), toggle("show-scoped", p.show_model_limits, |on, cx| crate::update_prefs(cx, |p| p.show_model_limits = on))),
-            row("Show reset times", None, toggle("show-reset", p.show_reset_times, |on, cx| crate::update_prefs(cx, |p| p.show_reset_times = on))),
+            row(l("Show 7-day window", "7 günlük pencereyi göster"), None, toggle("show-7d", p.show_seven_day, |on, cx| crate::update_prefs(cx, |p| p.show_seven_day = on))),
+            row(l("Show per-model limits", "Model bazlı limitleri göster"), Some(l("Weekly model-scoped windows such as Fable.", "Fable gibi haftalık model bazlı pencereler.")), toggle("show-scoped", p.show_model_limits, |on, cx| crate::update_prefs(cx, |p| p.show_model_limits = on))),
+            row(l("Show reset times", "Sıfırlanma zamanlarını göster"), None, toggle("show-reset", p.show_reset_times, |on, cx| crate::update_prefs(cx, |p| p.show_reset_times = on))),
+            row(l("Show pace", "Tempoyu göster"), Some(l("Mark windows used faster than an even pace, and say when they would run out.", "Eşit tempodan hızlı harcanan pencereleri işaretle ve ne zaman biteceklerini söyle.")), toggle("show-pace", p.show_pace, |on, cx| crate::update_prefs(cx, |p| p.show_pace = on))),
         ]))
 }
 
-fn page_accounts(s: &AppState) -> impl IntoElement {
-    let mut rows: Vec<gpui::AnyElement> = Vec::new();
-    match &s.accounts {
-        Some(list) if !list.accounts.is_empty() => {
-            for acc in &list.accounts {
-                let n = acc.number;
-                let hidden = s.prefs.is_hidden(n);
-                let enabled = !acc.disabled;
-                let label = format!("{}  {}", n, acc.email);
-                let desc = format!(
-                    "{}{}{}",
-                    acc.org_tag(),
-                    acc.plan
-                        .as_deref()
-                        .map(|p| format!(" · {p}"))
-                        .unwrap_or_default(),
-                    if acc.active { " · current" } else { "" }
-                );
-                rows.push(row(
-                    &label,
-                    Some(&desc),
+/// A small text button under an account row.
+fn action(
+    id: String,
+    label: &str,
+    color: u32,
+    on_click: impl Fn(&mut App) + 'static,
+) -> impl IntoElement {
+    div()
+        .id(SharedString::from(id))
+        .px_1p5()
+        .py(px(1.0))
+        .rounded(px(4.0))
+        .cursor_pointer()
+        .text_size(px(11.0))
+        .text_color(c(color))
+        .hover(|d| d.bg(c(t().hover)))
+        .child(label.to_string())
+        .on_click(move |_, _, cx| on_click(cx))
+}
+
+fn labelled_toggle(label: &str, toggle: impl IntoElement) -> impl IntoElement {
+    div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .child(
+            div()
+                .text_size(px(11.0))
+                .text_color(c(t().secondary))
+                .child(label.to_string()),
+        )
+        .child(toggle)
+}
+
+fn account_settings_row(
+    acc: &crate::cswap::Account,
+    s: &AppState,
+    first: bool,
+    last: bool,
+    broken: bool,
+) -> gpui::AnyElement {
+    let n = acc.number;
+    let hidden = s.prefs.is_hidden(n);
+    let enabled = !acc.disabled;
+    let mut desc = Vec::new();
+    if acc.alias.as_deref().is_some_and(|a| !a.is_empty()) {
+        desc.push(acc.email.clone());
+    }
+    desc.push(acc.org_tag());
+    if let Some(p) = &acc.plan {
+        desc.push(p.clone());
+    }
+    if acc.active {
+        desc.push(l("current", "aktif").into());
+    }
+    let problem = if acc.needs_login() {
+        acc.status_label()
+    } else if broken {
+        Some(
+            l(
+                "Shares a saved login with another slot",
+                "Kayıtlı girişi başka bir slotla aynı",
+            )
+            .to_string(),
+        )
+    } else {
+        None
+    };
+    let relogin_color = if problem.is_some() {
+        t().accent
+    } else {
+        t().secondary
+    };
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .px_3()
+        .py_2p5()
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap_4()
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(1.0))
+                        .flex_1()
+                        .min_w_0()
+                        .child(
+                            div()
+                                .text_size(px(12.5))
+                                .text_color(c(t().text))
+                                .child(format!("{n}  {}", acc.name())),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(10.5))
+                                .text_color(c(t().secondary))
+                                .whitespace_nowrap()
+                                .overflow_hidden()
+                                .text_ellipsis()
+                                .child(desc.join(" · ")),
+                        )
+                        .when_some(problem, |d, p| {
+                            d.child(div().text_size(px(10.5)).text_color(c(t().danger)).child(p))
+                        }),
+                )
+                .child(
                     div()
                         .flex()
                         .items_center()
                         .gap_4()
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap_2()
-                                .child(
-                                    div()
-                                        .text_size(px(11.0))
-                                        .text_color(c(t().secondary))
-                                        .child("Show in menu"),
-                                )
-                                .child(toggle(format!("hide-{n}"), !hidden, move |on, cx| {
-                                    crate::update_prefs(cx, |p| {
-                                        if on != !p.is_hidden(n) {
-                                            p.toggle_hidden(n);
-                                        }
-                                    })
-                                })),
-                        )
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap_2()
-                                .child(
-                                    div()
-                                        .text_size(px(11.0))
-                                        .text_color(c(t().secondary))
-                                        .child("Auto-rotation"),
-                                )
-                                .child(toggle(format!("enable-{n}"), enabled, move |on, cx| {
-                                    crate::set_account_enabled(cx, n, on)
-                                })),
-                        ),
+                        .child(labelled_toggle(
+                            l("Show in menu", "Menüde göster"),
+                            toggle(format!("hide-{n}"), !hidden, move |on, cx| {
+                                crate::update_prefs(cx, |p| {
+                                    if on != !p.is_hidden(n) {
+                                        p.toggle_hidden(n);
+                                    }
+                                })
+                            }),
+                        ))
+                        .child(labelled_toggle(
+                            l("Auto-rotation", "Otomatik rotasyon"),
+                            toggle(format!("enable-{n}"), enabled, move |on, cx| {
+                                crate::set_account_enabled(cx, n, on)
+                            }),
+                        )),
+                ),
+        )
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap_1()
+                .ml(px(-6.0))
+                .child(action(
+                    format!("rename-{n}"),
+                    l("Rename", "Yeniden adlandır"),
+                    t().secondary,
+                    move |cx| crate::rename_account(cx, n),
+                ))
+                .child(action(
+                    format!("relogin-{n}"),
+                    l("Sign in again", "Yeniden giriş yap"),
+                    relogin_color,
+                    move |cx| crate::onboarding::open(cx, crate::onboarding::Entry::Relogin(n)),
+                ))
+                .when(!first, |d| {
+                    d.child(action(
+                        format!("up-{n}"),
+                        l("Move up", "Yukarı taşı"),
+                        t().secondary,
+                        move |cx| crate::move_account(cx, n, true),
+                    ))
+                })
+                .when(!last, |d| {
+                    d.child(action(
+                        format!("down-{n}"),
+                        l("Move down", "Aşağı taşı"),
+                        t().secondary,
+                        move |cx| crate::move_account(cx, n, false),
+                    ))
+                })
+                .child(div().flex_1())
+                .child(action(
+                    format!("remove-{n}"),
+                    l("Remove", "Kaldır"),
+                    t().danger,
+                    move |cx| crate::remove_account(cx, n),
+                )),
+        )
+        .into_any_element()
+}
+
+/// cswap's duplicate-login warning, without its CLI advice and in the interface language.
+fn duplicate_warning(w: &str) -> String {
+    let slots: Vec<String> = w
+        .split("Account-")
+        .skip(1)
+        .map(|rest| rest.chars().take_while(char::is_ascii_digit).collect())
+        .collect();
+    let email = w
+        .split_once('(')
+        .and_then(|(_, rest)| rest.split_once(')'))
+        .map(|(e, _)| e);
+    match (slots.as_slice(), email) {
+        ([a, b], Some(e)) => lf!(
+            "Accounts {a} and {b} hold the same saved login ({e}). Use “Sign in again” on the account whose login is wrong.",
+            "{a} ve {b} numaralı hesaplar aynı kayıtlı girişi taşıyor ({e}). Girişi yanlış olan hesapta “Yeniden giriş yap”ı kullan."
+        ),
+        _ => {
+            let text = w.split(" — ").next().unwrap_or(w);
+            lf!(
+                "{text}. Use “Sign in again” on the account whose login is wrong.",
+                "{text}. Girişi yanlış olan hesapta “Yeniden giriş yap”ı kullan."
+            )
+        }
+    }
+}
+
+fn page_accounts(s: &AppState) -> impl IntoElement {
+    let mut rows: Vec<gpui::AnyElement> = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
+    match &s.accounts {
+        Some(list) if !list.accounts.is_empty() => {
+            let broken = list.duplicate_slots();
+            warnings = list.duplicate_account_warnings.clone();
+            let count = list.accounts.len();
+            for (i, acc) in list.accounts.iter().enumerate() {
+                rows.push(account_settings_row(
+                    acc,
+                    s,
+                    i == 0,
+                    i + 1 == count,
+                    broken.contains(&acc.number),
                 ));
             }
         }
         _ => rows.push(row(
-            "No accounts",
-            Some("Add one with `cswap add` in a terminal."),
+            l("No accounts yet", "Henüz hesap yok"),
+            Some(l(
+                "Add the accounts you use with Claude Code below.",
+                "Claude Code ile kullandığın hesapları aşağıdan ekle.",
+            )),
             div(),
         )),
     }
-    div()
+    let mut col = div()
         .flex()
         .flex_col()
-        .child(heading("Managed accounts"))
-        .child(div().text_size(px(11.0)).text_color(c(t().secondary)).mb_2().child("“Show in menu” only hides a row in this app. “Auto-rotation” runs `cswap enable/disable`, which keeps the account out of cswap's automatic switching."))
-        .child(group(rows))
-        .child(heading("Add or remove"))
-        .child(group(vec![row(
-            "Accounts are managed by cswap",
-            Some("cswap add · cswap remove <n> · cswap alias <n> <name>"),
-            button("open-cswap", "Open claude-swap on GitHub", false, |cx| cx.open_url("https://github.com/realiti4/claude-swap")),
-        )]))
+        .child(heading(l("Managed accounts", "Yönetilen hesaplar")))
+        .child(div().text_size(px(11.0)).text_color(c(t().secondary)).mb_2().child(l("“Show in menu” only hides a row in this app. “Auto-rotation” runs `cswap enable/disable`, which keeps the account out of cswap's automatic switching.", "“Menüde göster” yalnızca bu uygulamadaki satırı gizler. “Otomatik rotasyon” `cswap enable/disable` çalıştırır; kapalıysa hesap cswap'ın otomatik geçişlerine katılmaz.")));
+    for w in warnings {
+        // drop cswap's CLI advice; "Sign in again" on the row does it
+        let text = duplicate_warning(&w);
+        col = col.child(
+            div()
+                .mb_2()
+                .px_3()
+                .py_2()
+                .rounded_md()
+                .border_1()
+                .border_color(c(t().hairline))
+                .bg(c(t().group))
+                .text_size(px(11.0))
+                .text_color(c(t().danger))
+                .child(text),
+        );
+    }
+    if let Some(e) = &s.accounts_error {
+        col = col.child(
+            div()
+                .mb_2()
+                .text_size(px(11.0))
+                .text_color(c(t().danger))
+                .child(e.clone()),
+        );
+    }
+    col.child(group(rows))
+        .child(heading(l("Add an account", "Hesap ekle")))
+        .child(group(vec![
+            row(
+                l("Sign in to another Claude account", "Başka bir Claude hesabına giriş yap"),
+                Some(l("Opens claude.ai in your browser. cswap saves the login, and Claude Code switches back to the account it uses now.", "Tarayıcında claude.ai'yi açar. cswap girişi kaydeder, Claude Code da şu an kullandığı hesaba geri döner.")),
+                primary_button("add-account", l("Add account…", "Hesap ekle…"), true, |cx| {
+                    crate::onboarding::open(cx, crate::onboarding::Entry::AddAccount)
+                }),
+            ),
+            row(
+                l("Setup assistant", "Kurulum asistanı"),
+                Some(l("Check Claude Code and claude-swap, and walk through adding accounts again.", "Claude Code ve claude-swap'ı kontrol et, hesap ekleme adımlarını yeniden izle.")),
+                button("run-setup", l("Open", "Aç"), false, |cx| crate::onboarding::open(cx, crate::onboarding::Entry::Welcome)),
+            ),
+        ]))
 }
 
 fn page_autoswitch(s: &AppState) -> impl IntoElement {
@@ -743,44 +1000,44 @@ fn page_autoswitch(s: &AppState) -> impl IntoElement {
         );
     }
     col = col
-        .child(heading("Thresholds"))
-        .child(div().text_size(px(11.0)).text_color(c(t().secondary)).mb_2().child("These are cswap's own settings (`cswap config`). They drive `cswap auto`; run `cswap auto` or `cswap menubar --install-service` to have switching happen automatically."))
+        .child(heading(l("Thresholds", "Eşikler")))
+        .child(div().text_size(px(11.0)).text_color(c(t().secondary)).mb_2().child(l("These are cswap's own settings (`cswap config`). They drive `cswap auto`; run `cswap auto` or `cswap menubar --install-service` to have switching happen automatically.", "Bunlar cswap'ın kendi ayarları (`cswap config`) ve `cswap auto`'yu yönetir. Geçişlerin otomatik olması için `cswap auto` ya da `cswap menubar --install-service` çalıştır.")))
         .child(group(vec![
-            row("Switch at", Some("Switch when the binding 5h/7d window reaches this much used."), num_setting("threshold", "autoswitch.threshold", list, 90.0, 5.0, 50.0, 99.0, "%")),
-            row("Hysteresis", Some("A target must beat the active account by this many points."), num_setting("hyst", "autoswitch.hysteresisPct", list, 10.0, 1.0, 0.0, 50.0, "%")),
-            row("Poll interval", Some("For the `cswap auto` loop."), num_setting("interval", "autoswitch.intervalSeconds", list, 60.0, 15.0, 15.0, 900.0, "s")),
-            row("Cooldown", Some("Minimum time between proactive switches."), num_setting("cooldown", "autoswitch.cooldownSeconds", list, 300.0, 60.0, 0.0, 3600.0, "s")),
-            row("Unhealthy after", Some("Consecutive failed polls before an account is skipped."), num_setting("unhealthy", "autoswitch.unhealthyTicks", list, 3.0, 1.0, 1.0, 20.0, " polls")),
+            row(l("Switch at", "Geçiş eşiği"), Some(l("Switch when the binding 5h/7d window reaches this much used.", "Belirleyici 5h/7d penceresi bu kadar kullanılınca geç.")), num_setting("threshold", "autoswitch.threshold", list, 90.0, 5.0, 50.0, 99.0, "%")),
+            row(l("Hysteresis", "Histerezis"), Some(l("A target must beat the active account by this many points.", "Hedef hesap aktif hesabı bu kadar puan geçmeli.")), num_setting("hyst", "autoswitch.hysteresisPct", list, 10.0, 1.0, 0.0, 50.0, "%")),
+            row(l("Poll interval", "Sorgu aralığı"), Some(l("For the `cswap auto` loop.", "`cswap auto` döngüsü için.")), num_setting("interval", "autoswitch.intervalSeconds", list, 60.0, 15.0, 15.0, 900.0, "s")),
+            row(l("Cooldown", "Bekleme süresi"), Some(l("Minimum time between proactive switches.", "Kendiliğinden yapılan iki geçiş arasındaki en kısa süre.")), num_setting("cooldown", "autoswitch.cooldownSeconds", list, 300.0, 60.0, 0.0, 3600.0, "s")),
+            row(l("Unhealthy after", "Sağlıksız sayma"), Some(l("Consecutive failed polls before an account is skipped.", "Bir hesap atlanmadan önceki art arda başarısız sorgu sayısı.")), num_setting("unhealthy", "autoswitch.unhealthyTicks", list, 3.0, 1.0, 1.0, 20.0, l(" polls", " sorgu"))),
         ]))
-        .child(heading("Strategy"))
+        .child(heading(l("Strategy", "Strateji")))
         .child(group(vec![
             row(
-                "Pick the target by",
-                Some("best: most headroom · consume-first: soonest weekly reset"),
+                l("Pick the target by", "Hedefi seçerken"),
+                Some(l("best: most headroom · consume-first: soonest weekly reset", "best: en çok boş yer · consume-first: haftalık sıfırlanması en yakın")),
                 segmented("strategy", &["best", "consume-first"], strategy_sel, |m| m, |m, cx| {
                     crate::set_cswap_config(cx, "autoswitch.strategy".into(), Some(m.to_string()))
                 })
                 .into_any_element(),
             ),
             row(
-                "Also watch model limits",
-                Some("Switch on weekly model-scoped limits too."),
+                l("Also watch model limits", "Model limitlerini de izle"),
+                Some(l("Switch on weekly model-scoped limits too.", "Haftalık model bazlı limitlerde de geç.")),
                 segmented("model", &["none", "Fable", "all"], model_sel, |m| m, |m, cx| {
                     crate::set_cswap_config(cx, "autoswitch.model".into(), if m == "none" { None } else { Some(m.to_string()) })
                 })
                 .into_any_element(),
             ),
             row(
-                "Include API-key accounts",
-                Some("Allow rotating onto managed API-key accounts (billed per token)."),
+                l("Include API-key accounts", "API anahtarlı hesapları dahil et"),
+                Some(l("Allow rotating onto managed API-key accounts (billed per token).", "Yönetilen API anahtarlı hesaplara geçişe izin ver (token başına ücretlendirilir).")),
                 toggle("apikeys", cfg_bool(list, "autoswitch.includeApiKeyAccounts"), |on, cx| crate::set_cswap_config(cx, "autoswitch.includeApiKeyAccounts".into(), Some(on.to_string()))),
             ),
         ]))
         .child(heading(""))
         .child(group(vec![row(
-            "Reset auto-switch settings",
-            Some("Clears every autoswitch.* key back to cswap defaults."),
-            button("reset-auto", "Reset to defaults", true, |cx| {
+            l("Reset auto-switch settings", "Otomatik geçiş ayarlarını sıfırla"),
+            Some(l("Clears every autoswitch.* key back to cswap defaults.", "Tüm autoswitch.* ayarlarını cswap varsayılanlarına döndürür.")),
+            button("reset-auto", l("Reset to defaults", "Varsayılanlara dön"), true, |cx| {
                 for k in ["threshold", "intervalSeconds", "cooldownSeconds", "hysteresisPct", "strategy", "includeApiKeyAccounts", "unhealthyTicks", "model"] {
                     crate::set_cswap_config(cx, format!("autoswitch.{k}"), None);
                 }
@@ -792,14 +1049,14 @@ fn page_autoswitch(s: &AppState) -> impl IntoElement {
                 .text_size(px(11.0))
                 .text_color(c(t().tertiary))
                 .mt_2()
-                .child("saving…"),
+                .child(l("saving…", "kaydediliyor…")),
         );
     }
     col
 }
 
 fn page_about() -> impl IntoElement {
-    let built = option_env!("SWAPBAR_BUILT").unwrap_or("source build");
+    let built = option_env!("SWAPBAR_BUILT").unwrap_or(l("source build", "kaynak koddan derleme"));
     div()
         .flex()
         .flex_col()
@@ -828,7 +1085,7 @@ fn page_about() -> impl IntoElement {
                     div()
                         .text_size(px(12.0))
                         .text_color(c(t().secondary))
-                        .child(format!("Version {APP_VERSION}")),
+                        .child(lf!("Version {APP_VERSION}", "Sürüm {APP_VERSION}")),
                 )
                 .child(
                     div()
@@ -841,28 +1098,40 @@ fn page_about() -> impl IntoElement {
                         .text_size(px(11.0))
                         .text_color(c(t().secondary))
                         .mt_2()
-                        .child("Every Claude account's quota in view, one click to switch."),
+                        .child(l(
+                            "Every Claude account's quota in view, one click to switch.",
+                            "Her Claude hesabının kotası gözünün önünde, geçiş tek tık.",
+                        )),
                 ),
         )
-        .child(heading("Author"))
+        .child(heading(l("Author", "Geliştirici")))
         .child(group(vec![row(
             "Mustafa Afat",
-            Some("Co-Owner & CTO of Miova and Founder & CEO of Fidkeep"),
+            Some(l(
+                "Co-Owner & CTO of Miova and Founder & CEO of Fidkeep",
+                "Miova'nın Ortağı ve CTO'su, Fidkeep'in Kurucusu ve CEO'su",
+            )),
             div()
                 .text_size(px(11.0))
                 .text_color(c(t().tertiary))
-                .child("Turkey"),
+                .child(l("Turkey", "Türkiye")),
         )]))
-        .child(heading("Links"))
+        .child(heading(l("Links", "Bağlantılar")))
         .child(group(vec![
             link(
                 "l-src",
                 "github",
-                "Swapbar source",
+                l("Swapbar source", "Swapbar kaynak kodu"),
                 "https://github.com/afatmustafa/swapbar",
             )
             .into_any_element(),
-            link("l-web", "globe", "Website", "https://afat.me").into_any_element(),
+            link(
+                "l-web",
+                "globe",
+                l("Website", "Web sitesi"),
+                "https://afat.me",
+            )
+            .into_any_element(),
             link("l-gh", "github", "GitHub", "https://github.com/afatmustafa").into_any_element(),
             link("l-x", "x", "X / Twitter", "https://twitter.com/afatmus").into_any_element(),
             link(
@@ -880,26 +1149,32 @@ fn page_about() -> impl IntoElement {
             )
             .into_any_element(),
         ]))
-        .child(heading("Built with"))
+        .child(heading(l("Built with", "Kullanılanlar")))
         .child(group(vec![
             link(
                 "l-cswap",
                 "github",
-                "claude-swap — multi-account switching and quota polling",
+                l(
+                    "claude-swap — multi-account switching and quota polling",
+                    "claude-swap — çoklu hesap geçişi ve kota sorgulama",
+                ),
                 "https://github.com/realiti4/claude-swap",
             )
             .into_any_element(),
             link(
                 "l-gpui",
                 "github",
-                "gpui — Zed's GPU-accelerated UI framework",
+                l(
+                    "gpui — Zed's GPU-accelerated UI framework",
+                    "gpui — Zed'in GPU hızlandırmalı arayüz kütüphanesi",
+                ),
                 "https://github.com/zed-industries/zed/tree/main/crates/gpui",
             )
             .into_any_element(),
             link(
                 "l-hugeicons",
                 "globe",
-                "Hugeicons — icon set",
+                l("Hugeicons — icon set", "Hugeicons — ikon seti"),
                 "https://hugeicons.com/?via=afat",
             )
             .into_any_element(),
@@ -912,7 +1187,10 @@ fn page_about() -> impl IntoElement {
                 .mb_2()
                 .flex()
                 .justify_center()
-                .child("© 2026 Mustafa Afat. MIT License."),
+                .child(l(
+                    "© 2026 Mustafa Afat. MIT License.",
+                    "© 2026 Mustafa Afat. MIT Lisansı.",
+                )),
         )
 }
 

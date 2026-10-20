@@ -6,6 +6,8 @@ use gpui::{
 use crate::advice::{self, Suggestion};
 use crate::assets::icon;
 use crate::cswap::{Account, Window as UsageWindow};
+use crate::i18n::l;
+use crate::lf;
 use crate::settings::{PercentMode, Prefs};
 use crate::update::Release;
 use crate::usage::{Summary, format_tokens, format_usd};
@@ -163,14 +165,28 @@ fn section_header(glyph: &str, title: &str, trailing: Option<String>) -> impl In
     row
 }
 
-fn quota_row(label: &str, w: Option<&UsageWindow>, prefs: &Prefs) -> impl IntoElement {
+/// Where an even pace would put the bar now, when the window is used faster than that.
+fn pace_marker(w: Option<&UsageWindow>, mode: PercentMode) -> Option<f64> {
+    let w = w?;
+    if w.ahead_of_pace != Some(true) {
+        return None;
+    }
+    Some(mode.value(w.expected_pct?) / 100.0)
+}
+
+fn quota_row(label: &str, w: Option<&UsageWindow>, prefs: &Prefs, pace: bool) -> impl IntoElement {
     let mode = prefs.percent_mode;
+    let marker = pace_marker(w, mode).filter(|_| pace);
     let remaining = w.map(|w| (100.0 - w.pct).clamp(0.0, 100.0));
     let shown = w.map(|w| mode.value(w.pct));
     let reset = if prefs.show_reset_times {
         w.and_then(|w| match (&w.countdown, &w.clock) {
-            (Some(cd), Some(clock)) => Some(format!("{cd} · {clock}")),
-            (Some(cd), None) => Some(cd.clone()),
+            (Some(cd), Some(clock)) => Some(format!(
+                "{} · {}",
+                crate::i18n::time(cd),
+                crate::i18n::time(clock)
+            )),
+            (Some(cd), None) => Some(crate::i18n::time(cd)),
             _ => None,
         })
         .unwrap_or_default()
@@ -201,6 +217,7 @@ fn quota_row(label: &str, w: Option<&UsageWindow>, prefs: &Prefs) -> impl IntoEl
         )
         .child(
             div()
+                .relative()
                 .w(px(120.0))
                 .h(px(3.0))
                 .rounded_full()
@@ -211,7 +228,20 @@ fn quota_row(label: &str, w: Option<&UsageWindow>, prefs: &Prefs) -> impl IntoEl
                         .w(relative(fill as f32))
                         .rounded_full()
                         .bg(bar_color),
-                ),
+                )
+                .when_some(marker, |d, at| {
+                    d.child(
+                        div()
+                            .absolute()
+                            .top(px(-3.0))
+                            .left(relative(at as f32))
+                            .ml(px(-1.0))
+                            .w(px(2.0))
+                            .h(px(9.0))
+                            .rounded_full()
+                            .bg(c(t().warn)),
+                    )
+                }),
         )
         .child(
             num(shown
@@ -309,9 +339,18 @@ fn suggestion_banner(s: &Suggestion) -> impl IntoElement {
     banner(
         "suggest-switch",
         "swap",
-        format!("Current account has {:.0}% left", s.current_headroom),
-        format!("{} has {:.0}% left", s.email, s.headroom),
-        "Switch",
+        lf!(
+            "Current account has {:.0}% left",
+            "Aktif hesapta %{:.0} kaldı",
+            s.current_headroom
+        ),
+        lf!(
+            "{} has {:.0}% left",
+            "{} hesabında %{:.0} kaldı",
+            s.email,
+            s.headroom
+        ),
+        l(l("Switch", "Geç"), "Geç"),
         move |cx| crate::switch_account(cx, number),
     )
 }
@@ -321,9 +360,14 @@ fn update_banner(r: &Release) -> impl IntoElement {
     banner(
         "update",
         "rocket",
-        format!("{} {} is available", crate::APP_NAME, r.version),
-        format!("You have {}", crate::APP_VERSION),
-        "Download",
+        lf!(
+            "{} {} is available",
+            "{} {} çıktı",
+            crate::APP_NAME,
+            r.version
+        ),
+        lf!("You have {}", "Sizdeki sürüm {}", crate::APP_VERSION),
+        l(l("Download", "İndir"), "İndir"),
         move |cx| cx.open_url(&url),
     )
 }
@@ -346,13 +390,13 @@ fn account_row(
     let scoped: Vec<&UsageWindow> = usage.map(|u| u.scoped.iter().collect()).unwrap_or_default();
 
     let status: (String, u32) = if switching == Some(number) {
-        ("switching…".into(), t().secondary)
+        (l("switching…", "geçiliyor…").into(), t().secondary)
     } else if active {
-        ("current".into(), t().accent)
+        (l("current", "aktif").into(), t().accent)
     } else if acc.disabled {
-        ("paused".into(), t().tertiary)
+        (l("paused", "duraklatıldı").into(), t().tertiary)
     } else if suggested {
-        ("suggested".into(), t().ok)
+        (l("suggested", "önerilen").into(), t().ok)
     } else {
         (String::new(), t().tertiary)
     };
@@ -420,33 +464,65 @@ fn account_row(
                 .child(status.0),
         );
 
-    let mut quotas = div()
-        .flex()
-        .flex_col()
-        .gap_0p5()
-        .pl(px(15.0))
-        .child(quota_row("5h", five, prefs));
+    // a stale reading's pace is hours old
+    let pace = prefs.show_pace && !acc.stale;
+    let mut windows: Vec<(&str, Option<&UsageWindow>)> = vec![("5h", five)];
     if seven.is_some() && prefs.show_seven_day {
-        quotas = quotas.child(quota_row("7d", seven, prefs));
+        windows.push(("7d", seven));
     }
     if prefs.show_model_limits {
-        for s in scoped {
-            quotas = quotas.child(quota_row(
-                s.name.as_deref().unwrap_or("model"),
-                Some(s),
-                prefs,
-            ));
+        windows.extend(
+            scoped
+                .iter()
+                .map(|s| (s.name.as_deref().unwrap_or("model"), Some(*s))),
+        );
+    }
+    let mut quotas = div().flex().flex_col().gap_0p5().pl(px(15.0));
+    for (label, w) in &windows {
+        quotas = quotas.child(quota_row(label, *w, prefs, pace));
+    }
+    if pace {
+        let now = chrono::Utc::now();
+        for (label, w) in &windows {
+            let Some(out) = w.and_then(|w| advice::runs_out(w, now)) else {
+                continue;
+            };
+            let at = crate::i18n::time(&advice::local_clock(out, now));
+            let text = match w.and_then(|w| w.clock.as_deref()).map(crate::i18n::time) {
+                Some(r) => lf!(
+                    "At this pace, {label} runs out around {at}, before its {r} reset",
+                    "Bu tempoyla {label}, {r} sıfırlanmasından önce {at} civarında biter"
+                ),
+                None => lf!(
+                    "At this pace, {label} runs out around {at}",
+                    "Bu tempoyla {label} {at} civarında biter"
+                ),
+            };
+            quotas = quotas.child(
+                div()
+                    .text_size(px(10.5))
+                    .text_color(c(t().warn))
+                    .whitespace_nowrap()
+                    .overflow_hidden()
+                    .text_ellipsis()
+                    .child(text),
+            );
         }
     }
-    if let Some(st) = acc.usage_status.as_deref()
-        && st != "ok"
-    {
+    if let Some(label) = acc.status_label() {
         quotas = quotas.child(
             div()
                 .pl(px(0.0))
                 .text_size(px(10.5))
                 .text_color(c(t().warn))
-                .child(st.to_string()),
+                .child(match acc.usage_age_seconds.filter(|_| acc.stale) {
+                    Some(age) => lf!(
+                        "{label} · showing reading from {}",
+                        "{label} · {} okuma gösteriliyor",
+                        ago(age)
+                    ),
+                    None => label,
+                }),
         );
     }
 
@@ -470,6 +546,33 @@ fn account_row(
         }))
 }
 
+fn ago(seconds: f64) -> String {
+    if seconds < 3600.0 {
+        lf!("{}m ago", "{} dk önceki", (seconds / 60.0).max(1.0) as u64)
+    } else {
+        lf!("{}h ago", "{} sa önceki", (seconds / 3600.0) as u64)
+    }
+}
+
+fn setup_button(label: &'static str, entry: crate::onboarding::Entry) -> impl IntoElement {
+    div().px_4().pb_2().child(
+        div()
+            .id("setup")
+            .flex()
+            .justify_center()
+            .py(px(5.0))
+            .rounded(px(6.0))
+            .bg(c(t().accent))
+            .cursor_pointer()
+            .hover(|d| d.opacity(0.88))
+            .text_size(px(12.0))
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(c(0xffffff))
+            .child(label)
+            .on_click(move |_, _, cx| crate::onboarding::open(cx, entry)),
+    )
+}
+
 fn accounts_section(
     state: &AppState,
     suggested: Option<u32>,
@@ -486,17 +589,15 @@ fn accounts_section(
         })
         .map(|s| {
             if s < 90.0 {
-                "updated just now".to_string()
-            } else if s < 3600.0 {
-                format!("updated {}m ago", (s / 60.0) as u64)
+                l("updated just now", "az önce güncellendi").to_string()
             } else {
-                format!("updated {}h ago", (s / 3600.0) as u64)
+                lf!("updated {}", "{} güncellendi", ago(s))
             }
         });
     let prefs = &state.prefs;
     let title = match prefs.percent_mode {
-        PercentMode::Remaining => "Accounts · quota remaining",
-        PercentMode::Used => "Accounts · quota used",
+        PercentMode::Remaining => l("Accounts · quota remaining", "Hesaplar · kalan kota"),
+        PercentMode::Used => l("Accounts · quota used", "Hesaplar · kullanılan kota"),
     };
     let mut col = div()
         .flex()
@@ -518,11 +619,20 @@ fn accounts_section(
                         .text_size(px(12.0))
                         .text_color(c(t().secondary))
                         .child(if list.accounts.is_empty() {
-                            "No accounts. Add one with `cswap add`."
+                            l("No accounts yet.", "Henüz hesap yok.")
                         } else {
-                            "All accounts are hidden. Show them in Settings › Accounts."
+                            l(
+                                "All accounts are hidden. Show them in Settings › Accounts.",
+                                "Tüm hesaplar gizli. Ayarlar › Hesaplar'dan gösterebilirsin.",
+                            )
                         }),
                 );
+                if list.accounts.is_empty() {
+                    col = col.child(setup_button(
+                        l("Add an account", "Hesap ekle"),
+                        crate::onboarding::Entry::AddAccount,
+                    ));
+                }
             }
             for (i, acc) in visible.iter().enumerate() {
                 col = col.child(account_row(
@@ -543,7 +653,13 @@ fn accounts_section(
                     .text_size(px(11.5))
                     .text_color(c(t().danger))
                     .child(err.clone()),
-            )
+            );
+            if crate::setup::find(crate::setup::Tool::Cswap).is_none() {
+                col = col.child(setup_button(
+                    l("Set up Swapbar", "Swapbar'ı kur"),
+                    crate::onboarding::Entry::Welcome,
+                ));
+            }
         }
         (None, None) => {
             col = col.child(
@@ -552,7 +668,7 @@ fn accounts_section(
                     .py_2()
                     .text_size(px(12.0))
                     .text_color(c(t().tertiary))
-                    .child("Loading…"),
+                    .child(l("Loading…", "Yükleniyor…")),
             )
         }
     }
@@ -662,10 +778,18 @@ fn stacked_bar(summary: &Summary) -> impl IntoElement {
         .gap_3()
         .text_size(px(10.0))
         .text_color(c(t().tertiary))
-        .child(format!("input {:.0}%", pct(tot.input)))
-        .child(format!("cache read {:.0}%", pct(tot.cache_read)))
-        .child(format!("cache write {:.0}%", pct(tot.cache_create)))
-        .child(format!("output {:.0}%", pct(tot.output)));
+        .child(lf!("input {:.0}%", "girdi %{:.0}", pct(tot.input)))
+        .child(lf!(
+            "cache read {:.0}%",
+            "önbellek okuma %{:.0}",
+            pct(tot.cache_read)
+        ))
+        .child(lf!(
+            "cache write {:.0}%",
+            "önbellek yazma %{:.0}",
+            pct(tot.cache_create)
+        ))
+        .child(lf!("output {:.0}%", "çıktı %{:.0}", pct(tot.output)));
     div()
         .flex()
         .flex_col()
@@ -679,16 +803,17 @@ fn stacked_bar(summary: &Summary) -> impl IntoElement {
 
 fn usage_section(state: &AppState) -> impl IntoElement {
     let status = if state.usage_scanning {
-        Some("scanning transcripts…".to_string())
+        Some(l("scanning transcripts…", "transkriptler taranıyor…").to_string())
     } else if state.usage_scanned_once {
-        Some("estimated at API prices".to_string())
+        Some(l("estimated at API prices", "API fiyatlarıyla tahmini").to_string())
     } else {
         None
     };
-    let mut col = div()
-        .flex()
-        .flex_col()
-        .child(section_header("coins", "Usage", status));
+    let mut col =
+        div()
+            .flex()
+            .flex_col()
+            .child(section_header("coins", l("Usage", "Kullanım"), status));
 
     let (Some(today), Some(month)) = (&state.summary_today, &state.summary_month) else {
         return col.child(
@@ -697,7 +822,10 @@ fn usage_section(state: &AppState) -> impl IntoElement {
                 .py_2()
                 .text_size(px(12.0))
                 .text_color(c(t().tertiary))
-                .child("Scanning Claude Code transcripts…"),
+                .child(l(
+                    "Scanning Claude Code transcripts…",
+                    "Claude Code transkriptleri taranıyor…",
+                )),
         );
     };
 
@@ -710,7 +838,7 @@ fn usage_section(state: &AppState) -> impl IntoElement {
             .px_4()
             .child(div().flex_1())
             .child(
-                num("today")
+                num(l("today", "bugün"))
                     .w(px(COL_W))
                     .flex()
                     .justify_end()
@@ -718,7 +846,7 @@ fn usage_section(state: &AppState) -> impl IntoElement {
                     .text_color(c(t().tertiary)),
             )
             .child(
-                num("30 days")
+                num(l("30 days", "30 gün"))
                     .w(px(COL_W))
                     .flex()
                     .justify_end()
@@ -728,35 +856,35 @@ fn usage_section(state: &AppState) -> impl IntoElement {
     );
     col = col
         .child(usage_line(
-            "Cost",
+            l("Cost", "Maliyet"),
             format_usd(today.total.cost),
             format_usd(month.total.cost),
             true,
             false,
         ))
         .child(usage_line(
-            "Tokens",
+            l("Tokens", "Token"),
             format_tokens(today.total.tokens()),
             format_tokens(month.total.tokens()),
             false,
             false,
         ))
         .child(usage_line(
-            "Requests",
+            l("Requests", "İstek"),
             group(today.total.requests),
             group(month.total.requests),
             false,
             false,
         ))
         .child(usage_line(
-            "Output tokens",
+            l("Output tokens", "Çıktı token"),
             format_tokens(today.total.output),
             format_tokens(month.total.output),
             false,
             true,
         ))
         .child(usage_line(
-            "Cache read",
+            l("Cache read", "Önbellek okuma"),
             format_tokens(today.total.cache_read),
             format_tokens(month.total.cache_read),
             false,
@@ -807,7 +935,7 @@ fn usage_section(state: &AppState) -> impl IntoElement {
                 "–".into()
             },
             if unpriced {
-                "unpriced".into()
+                l("unpriced", "fiyatsız").into()
             } else {
                 format_usd(tot.cost)
             },
@@ -898,7 +1026,11 @@ impl Render for Root {
             .child(footer_item(
                 "refresh",
                 "refresh",
-                if busy { "Refreshing…" } else { "Refresh" },
+                if busy {
+                    l("Refreshing…", "Yenileniyor…")
+                } else {
+                    l("Refresh", "Yenile")
+                },
                 false,
                 |_, cx| {
                     crate::refresh_accounts(cx);
@@ -909,13 +1041,17 @@ impl Render for Root {
             .child(footer_item(
                 "settings",
                 "settings-small",
-                "Settings…",
+                l("Settings…", "Ayarlar…"),
                 false,
                 |_, cx| crate::open_settings(cx),
             ))
-            .child(footer_item("quit", "power", "Quit", true, |_, cx| {
-                cx.quit()
-            }));
+            .child(footer_item(
+                "quit",
+                "power",
+                l("Quit", "Çık"),
+                true,
+                |_, cx| cx.quit(),
+            ));
 
         div()
             .flex()
