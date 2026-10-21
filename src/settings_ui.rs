@@ -537,19 +537,24 @@ fn page_general(s: &AppState) -> impl IntoElement {
             ),
         ]))
         .child(heading(l("Updates", "Güncellemeler")))
-        .child(group(vec![
-            row(
-                l("Check for updates automatically", "Güncellemeleri otomatik kontrol et"),
-                Some(l("Looks for a new release on GitHub at launch and every 6 hours.", "Açılışta ve 6 saatte bir GitHub'da yeni sürüm arar.")),
-                toggle("check-updates", p.check_updates, |on, cx| {
-                    crate::update_prefs(cx, |p| p.check_updates = on);
-                    if on {
-                        crate::check_for_updates(cx, false);
-                    }
-                }),
-            ),
-            update_row(s),
-        ]))
+        .child(group(
+            [
+                row(
+                    l("Check for updates automatically", "Güncellemeleri otomatik kontrol et"),
+                    Some(l("Looks for a new Swapbar on GitHub and a new claude-swap on PyPI, at launch and every 6 hours.", "Açılışta ve 6 saatte bir GitHub'da yeni Swapbar, PyPI'da yeni claude-swap sürümü arar.")),
+                    toggle("check-updates", p.check_updates, |on, cx| {
+                        crate::update_prefs(cx, |p| p.check_updates = on);
+                        if on {
+                            crate::check_for_updates(cx, false);
+                        }
+                    }),
+                ),
+                update_row(s),
+            ]
+            .into_iter()
+            .chain(cswap_update_row(s))
+            .collect(),
+        ))
 }
 
 pub(crate) fn shortcut(keys: &str, enabled: bool) -> impl IntoElement {
@@ -598,6 +603,28 @@ fn update_row(s: &AppState) -> gpui::AnyElement {
     row(l("Latest version", "Son sürüm"), Some(&status), control)
 }
 
+/// claude-swap's own update, run with the tool that installed it. Shown only when a check
+/// found one: without it we don't know the installed version.
+fn cswap_update_row(s: &AppState) -> Option<gpui::AnyElement> {
+    let u = s.cswap_update.as_ref()?;
+    let status = lf!(
+        "Version {} is available. You have {}.",
+        "{} sürümü çıktı. Sizdeki sürüm: {}.",
+        u.latest,
+        u.installed
+    );
+    let label = if s.cswap_upgrading {
+        l("Updating…", "Güncelleniyor…")
+    } else {
+        l("Update", "Güncelle")
+    };
+    Some(row(
+        "claude-swap",
+        Some(&status),
+        button("cswap-upgrade", label, false, crate::upgrade_cswap),
+    ))
+}
+
 fn page_notifications(s: &AppState) -> impl IntoElement {
     let p = &s.prefs;
     let mut col = div().flex().flex_col();
@@ -644,6 +671,16 @@ fn page_notifications(s: &AppState) -> impl IntoElement {
                 Some(l("For accounts that had run low. Paused and hidden accounts are skipped.", "Kotası azalmış hesaplar için. Duraklatılmış ve gizli hesaplar atlanır.")),
                 toggle("notify-reset", p.notify_reset, |on, cx| {
                     crate::update_prefs(cx, |p| p.notify_reset = on);
+                    if on {
+                        notify::request_authorization();
+                    }
+                }),
+            ),
+            row(
+                l("When a saved login is about to expire", "Kayıtlı bir girişin süresi dolmak üzereyken"),
+                Some(l("3 days ahead, so you can sign in again before the account stops working. Needs claude-swap 0.27 or later.", "3 gün önceden, hesap çalışmayı bırakmadan yeniden giriş yapabilesin diye. claude-swap 0.27 veya üstü gerekir.")),
+                toggle("notify-login", p.notify_login, |on, cx| {
+                    crate::update_prefs(cx, |p| p.notify_login = on);
                     if on {
                         notify::request_authorization();
                     }
@@ -750,17 +787,19 @@ fn account_settings_row(
         desc.push(l("current", "aktif").into());
     }
     let problem = if acc.needs_login() {
-        acc.status_label()
+        acc.status_label().map(|p| (p, t().danger))
     } else if broken {
-        Some(
+        Some((
             l(
                 "Shares a saved login with another slot",
                 "Kayıtlı girişi başka bir slotla aynı",
             )
             .to_string(),
-        )
+            t().danger,
+        ))
     } else {
-        None
+        acc.login_expiry_label(chrono::Utc::now())
+            .map(|p| (p, t().accent))
     };
     let relogin_color = if problem.is_some() {
         t().accent
@@ -801,8 +840,8 @@ fn account_settings_row(
                                 .text_ellipsis()
                                 .child(desc.join(" · ")),
                         )
-                        .when_some(problem, |d, p| {
-                            d.child(div().text_size(px(10.5)).text_color(c(t().danger)).child(p))
+                        .when_some(problem, |d, (p, color)| {
+                            d.child(div().text_size(px(10.5)).text_color(c(color)).child(p))
                         }),
                 )
                 .child(

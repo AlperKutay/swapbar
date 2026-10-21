@@ -3,9 +3,14 @@
 //! switch transaction, so we never reimplement any of it here.
 
 use crate::i18n::l;
+use crate::lf;
 use crate::setup::{self, Tool};
+use chrono::{DateTime, Duration, Utc};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer};
+
+/// Warn this long before a saved login lapses.
+pub const LOGIN_WARN_DAYS: i64 = 3;
 
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -78,6 +83,17 @@ pub struct Account {
     pub last_good_usage: Option<Usage>,
     #[serde(default)]
     pub last_good_age_seconds: Option<f64>,
+    /// Why the last usage fetch failed ("http-429", "timeout", …) on an `unavailable`
+    /// row (cswap 0.27+).
+    #[serde(default, deserialize_with = "lenient")]
+    pub usage_error: Option<String>,
+    /// When cswap fetches again while it backs off from `usage_error` (ISO-8601).
+    #[serde(default, deserialize_with = "lenient")]
+    pub usage_retry_at: Option<String>,
+    /// When the saved login's refresh token lapses and the account needs a fresh
+    /// sign-in (ISO-8601, cswap 0.27+). Absent when Claude Code didn't record it.
+    #[serde(default, deserialize_with = "lenient")]
+    pub login_expires_at: Option<String>,
     /// `usage` holds `last_good_usage` because the latest fetch failed.
     #[serde(skip)]
     pub stale: bool,
@@ -106,9 +122,11 @@ impl Account {
     /// cswap's `usageStatus`, worded for people.
     pub fn status_label(&self) -> Option<String> {
         let st = self.usage_status.as_deref().filter(|s| *s != "ok")?;
+        if st == "unavailable" {
+            return Some(self.unavailable_label(Utc::now()));
+        }
         Some(
             match st {
-                "unavailable" => l("couldn't fetch usage", "kullanım alınamadı"),
                 "token_expired" => l(
                     "token expired, cswap refreshes it",
                     "token süresi doldu, cswap yeniliyor",
@@ -130,6 +148,42 @@ impl Account {
         )
     }
 
+    /// "couldn't fetch usage: rate limited · retrying at 14:32", with the cause and retry
+    /// time when cswap reports them.
+    fn unavailable_label(&self, now: DateTime<Utc>) -> String {
+        let mut s = l("couldn't fetch usage", "kullanım alınamadı").to_string();
+        if let Some(kind) = self.usage_error.as_deref().filter(|k| !k.is_empty()) {
+            s.push_str(": ");
+            s.push_str(&usage_error_text(kind));
+        }
+        if let Some(at) = parse_time(&self.usage_retry_at).filter(|t| *t > now) {
+            let clock = crate::i18n::time(&crate::advice::local_clock(at, now));
+            s.push_str(&lf!(" · retrying at {clock}", " · yeniden deneme {clock}"));
+        }
+        s
+    }
+
+    /// Time left on the saved login, once it is within `LOGIN_WARN_DAYS` of lapsing.
+    /// `None` when the login already needs a sign-in, since the status says so.
+    pub fn login_expires_in(&self, now: DateTime<Utc>) -> Option<Duration> {
+        if self.needs_login() {
+            return None;
+        }
+        let left = parse_time(&self.login_expires_at)? - now;
+        (left <= Duration::days(LOGIN_WARN_DAYS)).then_some(left.max(Duration::zero()))
+    }
+
+    /// "login expires in 2 days", while `login_expires_in` warns.
+    pub fn login_expiry_label(&self, now: DateTime<Utc>) -> Option<String> {
+        let left = self.login_expires_in(now)?;
+        Some(if left.is_zero() {
+            l("login expired", "girişin süresi doldu").into()
+        } else {
+            let when = expires_in_text(left);
+            lf!("login expires {when}", "giriş {when} sona eriyor")
+        })
+    }
+
     /// Show the last good reading when the latest fetch failed, as `cswap watch` does.
     /// `usage_status` keeps the failure, so advice still ignores the account.
     fn fall_back_to_last_good(&mut self) {
@@ -145,6 +199,36 @@ impl Account {
             Some(n) if !n.is_empty() => n.clone(),
             _ => l("personal", "kişisel").to_string(),
         }
+    }
+}
+
+fn parse_time(s: &Option<String>) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(s.as_deref()?)
+        .ok()
+        .map(|t| t.with_timezone(&Utc))
+}
+
+/// cswap's fetch-failure kind, worded for people.
+fn usage_error_text(kind: &str) -> String {
+    match kind {
+        "http-429" => l("rate limited", "istek sınırı").into(),
+        "timeout" => l("timed out", "zaman aşımı").into(),
+        "network" => l("no connection", "bağlantı yok").into(),
+        "bad-response" => l("unexpected response", "beklenmeyen yanıt").into(),
+        k if k.starts_with("http-5") => lf!("server error ({k})", "sunucu hatası ({k})"),
+        k => k.to_string(),
+    }
+}
+
+/// "in 2 days", "in 5 hours", "within an hour".
+pub fn expires_in_text(left: Duration) -> String {
+    let hours = left.num_hours();
+    if hours >= 48 {
+        lf!("in {} days", "{} gün içinde", hours / 24)
+    } else if hours >= 1 {
+        lf!("in {hours} hours", "{hours} saat içinde")
+    } else {
+        l("within an hour", "bir saat içinde").into()
     }
 }
 
@@ -404,6 +488,11 @@ pub fn set_alias(number: u32, alias: Option<&str>) -> Result<(), String> {
     .map(|_| ())
 }
 
+/// Update claude-swap with the tool that installed it (`uv tool` or `pipx`).
+pub fn upgrade() -> Result<(), String> {
+    run(&["upgrade"]).map(|_| ())
+}
+
 /// Exchange two accounts' slot numbers.
 pub fn swap_slots(a: u32, b: u32) -> Result<(), String> {
     run(&["swap", &a.to_string(), &b.to_string()]).map(|_| ())
@@ -621,5 +710,92 @@ mod tests {
         assert!(!a.needs_login());
         a.usage_status = Some("ok".into());
         assert_eq!(a.status_label(), None);
+    }
+
+    fn at(s: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc)
+    }
+
+    #[test]
+    fn reads_the_cswap_027_row_fields() {
+        let list: AccountList = serde_json::from_str(
+            r#"{"accounts": [{"number": 1, "email": "a@x.com", "usageStatus": "unavailable",
+                "usage": null, "usageError": "http-429", "usageRetryAt": "2026-10-21T14:32:00Z",
+                "loginExpiresAt": "2026-10-23T09:00:00Z"}]}"#,
+        )
+        .unwrap();
+        let a = &list.accounts[0];
+        assert_eq!(a.usage_error.as_deref(), Some("http-429"));
+        assert_eq!(a.usage_retry_at.as_deref(), Some("2026-10-21T14:32:00Z"));
+        assert_eq!(a.login_expires_at.as_deref(), Some("2026-10-23T09:00:00Z"));
+    }
+
+    #[test]
+    fn an_unavailable_row_says_why_and_when_it_retries() {
+        let now = at("2026-10-21T14:00:00Z");
+        let mut a = Account {
+            usage_status: Some("unavailable".into()),
+            ..Default::default()
+        };
+        assert_eq!(a.unavailable_label(now), "couldn't fetch usage");
+        a.usage_error = Some("http-429".into());
+        assert_eq!(
+            a.unavailable_label(now),
+            "couldn't fetch usage: rate limited"
+        );
+        let retry = at("2026-10-21T14:32:00Z");
+        a.usage_retry_at = Some("2026-10-21T14:32:00Z".into());
+        assert_eq!(
+            a.unavailable_label(now),
+            format!(
+                "couldn't fetch usage: rate limited · retrying at {}",
+                crate::advice::local_clock(retry, now)
+            )
+        );
+        // a retry time already behind us says nothing
+        assert_eq!(
+            a.unavailable_label(at("2026-10-21T15:00:00Z")),
+            "couldn't fetch usage: rate limited"
+        );
+        a.usage_error = Some("http-503".into());
+        a.usage_retry_at = None;
+        assert_eq!(
+            a.unavailable_label(now),
+            "couldn't fetch usage: server error (http-503)"
+        );
+    }
+
+    #[test]
+    fn warns_about_a_login_only_near_its_expiry() {
+        let now = at("2026-10-21T12:00:00Z");
+        let mut a = Account {
+            usage_status: Some("ok".into()),
+            login_expires_at: Some("2026-10-30T12:00:00Z".into()),
+            ..Default::default()
+        };
+        assert_eq!(a.login_expiry_label(now), None, "9 days out");
+        a.login_expires_at = Some("2026-10-23T18:00:00Z".into());
+        assert_eq!(
+            a.login_expiry_label(now).as_deref(),
+            Some("login expires in 2 days")
+        );
+        a.login_expires_at = Some("2026-10-22T05:00:00Z".into());
+        assert_eq!(
+            a.login_expiry_label(now).as_deref(),
+            Some("login expires in 17 hours")
+        );
+        a.login_expires_at = Some("2026-10-21T12:20:00Z".into());
+        assert_eq!(
+            a.login_expiry_label(now).as_deref(),
+            Some("login expires within an hour")
+        );
+        a.login_expires_at = Some("2026-10-20T12:00:00Z".into());
+        assert_eq!(a.login_expiry_label(now).as_deref(), Some("login expired"));
+        // once cswap reports the login as dead, the status line covers it
+        a.usage_status = Some("relogin_required".into());
+        assert_eq!(a.login_expiry_label(now), None);
+        a.usage_status = Some("ok".into());
+        a.login_expires_at = None;
+        assert_eq!(a.login_expiry_label(now), None);
     }
 }

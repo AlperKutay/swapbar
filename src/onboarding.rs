@@ -793,6 +793,11 @@ impl SetupRoot {
                         a.number,
                         a.status_label().filter(|_| a.needs_login()).map(|l| format!(" ({l})")).unwrap_or_default()
                     )
+                } else if let Some(left) = a.login_expires_in(chrono::Utc::now()).filter(|d| !d.is_zero()) {
+                    lf!("The login cswap saved for account {} expires {}. ", "cswap'ın {} numaralı hesap için sakladığı giriş {} sona eriyor. ",
+                        a.number,
+                        crate::cswap::expires_in_text(left)
+                    )
                 } else {
                     String::new()
                 };
@@ -959,7 +964,7 @@ impl SetupRoot {
 
     fn page_finish(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let p = self.state.read(cx).prefs.clone();
-        let notify_on = p.notify_low || p.notify_pace || p.notify_reset;
+        let notify_on = p.notify_low || p.notify_pace || p.notify_reset || p.notify_login;
         let launch = crate::settings::launch_agent_installed();
         div()
             .flex()
@@ -988,6 +993,7 @@ impl SetupRoot {
                             p.notify_low = on;
                             p.notify_pace = on;
                             p.notify_reset = on;
+                            p.notify_login = on;
                         });
                         if on {
                             notify::request_authorization();

@@ -116,6 +116,8 @@ pub struct Prefs {
     /// Warn when the current account's pace runs a window out before it resets.
     pub notify_pace: bool,
     pub notify_reset: bool,
+    /// Warn a few days before an account's saved login lapses.
+    pub notify_login: bool,
     pub check_updates: bool,
     pub hotkeys: bool,
 }
@@ -140,6 +142,7 @@ impl Default for Prefs {
             notify_low: true,
             notify_pace: true,
             notify_reset: true,
+            notify_login: true,
             check_updates: true,
             hotkeys: true,
         }
@@ -235,7 +238,14 @@ mod tests {
         assert_eq!(p.theme, Theme::Dark);
         assert!(p.is_hidden(3));
         assert_eq!(p.low_quota_pct, 15);
-        assert!(p.notify_low && p.notify_pace && p.show_pace && p.check_updates && p.hotkeys);
+        assert!(
+            p.notify_low
+                && p.notify_pace
+                && p.notify_login
+                && p.show_pace
+                && p.check_updates
+                && p.hotkeys
+        );
         assert_eq!(p.accounts_refresh_secs, 60);
     }
 

@@ -31,9 +31,10 @@ Swapbar shows the 5h, 7d and per-model (Fable) quotas of every cswap account at 
 - **One-click switching.** Click an inactive account to run `cswap switch`. The active account is marked **current**, and accounts left out of auto-rotation show as **paused**.
 - **Pace warnings.** A marker on a bar shows where an even pace would be when an account is using a window too fast, and the row says when the window would run out if that comes before its reset. A notification warns about the current account once per window.
 - **Switch suggestion.** When the current account's tightest window drops to the low-quota level (15% left by default), a banner names the account with the most room and switches to it in one click. That account is also marked **suggested** in the list.
-- **Notifications.** A notification when the current account runs low, with a **Switch** button for the best other account, and another when a depleted account's quota resets.
+- **Notifications.** A notification when the current account runs low, with a **Switch** button for the best other account, another when a depleted account's quota resets, and a warning 3 days before an account's saved login expires (claude-swap 0.27+), with **Sign in again** on its row.
+- **Why usage is missing.** When cswap can't fetch an account's usage, the row says why and when it tries again: "couldn't fetch usage: rate limited · retrying at 14:32" (claude-swap 0.27+).
 - **Global shortcuts.** `⌃⌥S` opens Swapbar from any app; `⌃⌥⇧S` switches to the account with the most quota left. No Accessibility permission needed.
-- **Update check.** Swapbar checks GitHub for a new release at launch and every 6 hours and shows a **Download** banner when one is out.
+- **Update check.** Swapbar checks GitHub for a new release at launch and every 6 hours and shows a **Download** banner when one is out. It checks PyPI for a new claude-swap too, and **Update** runs `cswap upgrade`.
 - **Quota in the menu bar.** The Swapbar icon is followed by the active account's quota, as `5h` or `5h · 7d`, shown as remaining or used.
 - **Token and cost summary.** Today and 30-day totals for cost, tokens, requests, output and cache reads, cost per account (worked out from cswap's switch log, `cswap run` sessions and each profile's login) and per model, and a bar splitting input, cache read, cache write and output.
 - **English and Turkish.** Follows the macOS language, or pick one in Settings › General.

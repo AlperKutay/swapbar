@@ -9,7 +9,7 @@ use crate::cswap::{Account, Window as UsageWindow};
 use crate::i18n::l;
 use crate::lf;
 use crate::settings::{PercentMode, Prefs};
-use crate::update::Release;
+use crate::update::{CswapUpdate, Release};
 use crate::usage::{Summary, format_tokens, format_usd};
 use crate::{AppState, Globals};
 
@@ -372,6 +372,25 @@ fn update_banner(r: &Release) -> impl IntoElement {
     )
 }
 
+fn cswap_update_banner(u: &CswapUpdate, upgrading: bool) -> impl IntoElement {
+    banner(
+        "cswap-update",
+        "refresh",
+        lf!(
+            "claude-swap {} is available",
+            "claude-swap {} çıktı",
+            u.latest
+        ),
+        lf!("You have {}", "Sizdeki sürüm {}", u.installed),
+        if upgrading {
+            l("Updating…", "Güncelleniyor…")
+        } else {
+            l("Update", "Güncelle")
+        },
+        crate::upgrade_cswap,
+    )
+}
+
 // ---------- accounts ----------
 
 fn account_row(
@@ -523,6 +542,28 @@ fn account_row(
                     ),
                     None => label,
                 }),
+        );
+    }
+    if let Some(label) = acc.login_expiry_label(chrono::Utc::now()) {
+        quotas = quotas.child(
+            div()
+                .flex()
+                .gap_1()
+                .text_size(px(10.5))
+                .child(div().text_color(c(t().warn)).child(format!("{label} ·")))
+                .child(
+                    div()
+                        .id(SharedString::from(format!("relogin-{number}")))
+                        .text_color(c(t().accent))
+                        .cursor_pointer()
+                        .hover(|d| d.opacity(0.8))
+                        .child(l("Sign in again", "Yeniden giriş yap"))
+                        .on_click(move |_, _, cx| {
+                            // not a click on the row, which would switch to the account
+                            cx.stop_propagation();
+                            crate::onboarding::open(cx, crate::onboarding::Entry::Relogin(number));
+                        }),
+                ),
         );
     }
 
@@ -1005,6 +1046,9 @@ impl Render for Root {
             .flex_1()
             .overflow_y_scroll()
             .when_some(s.update.as_ref(), |d, r| d.child(update_banner(r)))
+            .when_some(s.cswap_update.as_ref(), |d, u| {
+                d.child(cswap_update_banner(u, s.cswap_upgrading))
+            })
             .when_some(suggestion.as_ref(), |d, sg| d.child(suggestion_banner(sg)))
             .child(accounts_section(
                 &s,
