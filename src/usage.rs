@@ -4,7 +4,7 @@
 //! from where we left off. Dedup key is `message.id:requestId` (one JSONL
 //! line per content block repeats the same usage).
 
-use chrono::{DateTime, Local, NaiveDate, TimeZone};
+use chrono::{DateTime, Local, NaiveDate, NaiveTime, TimeZone};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
@@ -242,22 +242,21 @@ fn scan_file(path: &Path, from_offset: u64, min_ts: i64) -> std::io::Result<(Vec
     let mut reader = BufReader::with_capacity(1 << 20, f);
     let mut recs: Vec<Rec> = Vec::new();
     let mut index: HashMap<u64, usize> = HashMap::new();
-    let mut line = String::new();
+    let mut buf = Vec::new();
     let mut consumed = from_offset;
     loop {
-        line.clear();
-        let n = reader.read_line(&mut line)?;
+        buf.clear();
+        let n = reader.read_until(b'\n', &mut buf)?;
         if n == 0 {
             break;
         }
-        if !line.ends_with('\n') {
+        if buf.last() != Some(&b'\n') {
             // partial trailing line (still being written) — leave for next pass
             break;
         }
         consumed += n as u64;
-        if line.len() > 512 * 1024 {
-            continue;
-        }
+        // read_line would fail the whole file on one bad byte (e.g. a torn write)
+        let line = String::from_utf8_lossy(&buf);
         if let Some(rec) = parse_line(&line, min_ts) {
             match index.get(&rec.k) {
                 // later row wins within a file (final streaming chunk), unless incomplete
@@ -434,21 +433,24 @@ impl Period {
         }
     }
     fn start(self) -> i64 {
-        let now = Local::now();
-        let today = now.date_naive();
-        let day = |d: NaiveDate| {
-            Local
-                .from_local_datetime(&d.and_hms_opt(0, 0, 0).unwrap())
-                .single()
-                .map(|t| t.timestamp())
-                .unwrap_or(0)
+        let today = Local::now().date_naive();
+        let days_back = match self {
+            Period::Today => 0,
+            Period::Week => 6,
+            Period::Month => 29,
         };
-        match self {
-            Period::Today => day(today),
-            Period::Week => day(today - chrono::Duration::days(6)),
-            Period::Month => day(today - chrono::Duration::days(29)),
-        }
+        day_start(&Local, today - chrono::Duration::days(days_back))
     }
+}
+
+/// When `d` begins in `tz`. A DST change at midnight can skip it (the day
+/// starts at 01:00) or repeat it (the first one counts).
+fn day_start<Tz: TimeZone>(tz: &Tz, d: NaiveDate) -> i64 {
+    (0..3)
+        .filter_map(|h| d.and_hms_opt(h, 0, 0))
+        .find_map(|t| tz.from_local_datetime(&t).earliest())
+        .map(|t| t.timestamp())
+        .unwrap_or_else(|| d.and_time(NaiveTime::MIN).and_utc().timestamp())
 }
 
 #[derive(Debug, Clone, Default)]
@@ -604,6 +606,7 @@ pub fn format_usd(v: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::{FixedOffset, LocalResult, NaiveDateTime, Timelike};
     use std::io::Write;
 
     const T0: &str = "2026-10-18T10:00:00.000Z";
@@ -668,15 +671,111 @@ mod tests {
         assert!(!r.inc);
     }
 
-    fn temp_file(name: &str, body: &str) -> PathBuf {
+    fn temp_file(name: &str, body: impl AsRef<[u8]>) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("swapbar-test-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
         let p = dir.join(name);
         fs::File::create(&p)
             .unwrap()
-            .write_all(body.as_bytes())
+            .write_all(body.as_ref())
             .unwrap();
         p
+    }
+
+    #[test]
+    fn scan_reads_past_a_line_with_invalid_utf8() {
+        let a = line("m1", "r1", T0, "x", &usage(1, 0, 0, 1), Some("end_turn"));
+        let b = line("m2", "r2", T0, "x", &usage(2, 0, 0, 2), Some("end_turn"));
+        let mut body = format!("{a}\n").into_bytes();
+        body.extend_from_slice(b"{\"type\":\"user\",\"text\":\"\xff\xfe\"}\n");
+        body.extend_from_slice(format!("{b}\n").as_bytes());
+        let p = temp_file("utf8.jsonl", &body);
+        let (recs, consumed) = scan_file(&p, 0, 0).unwrap();
+        assert_eq!(recs.len(), 2);
+        assert_eq!(consumed as usize, body.len());
+    }
+
+    #[test]
+    fn scan_counts_a_row_with_a_large_tool_input() {
+        // a reply that is a single tool_use block writing a big file
+        let input = "a".repeat(600 * 1024);
+        let row = line("m1", "r1", T0, "x", &usage(3, 0, 0, 9), Some("tool_use")).replacen(
+            "\"usage\"",
+            &format!(
+                r#""content":[{{"type":"tool_use","input":{{"content":"{input}"}}}}],"usage""#
+            ),
+            1,
+        );
+        let p = temp_file("large.jsonl", format!("{row}\n"));
+        let (recs, _) = scan_file(&p, 0, 0).unwrap();
+        assert_eq!(recs.len(), 1);
+        assert_eq!(recs[0].o, 9);
+    }
+
+    /// A zone at UTC-3 that moves to UTC-2 at midnight on `DST_DAY`, so that
+    /// day has no 00:xx. With `REPEAT` it instead moves from UTC-2 back to
+    /// UTC-3 at 01:00, so 00:xx happens twice.
+    #[derive(Clone)]
+    struct DstAtMidnight<const REPEAT: bool>;
+
+    const DST_DAY: NaiveDate = NaiveDate::from_ymd_opt(2026, 11, 1).unwrap();
+
+    fn west(hours: i32) -> FixedOffset {
+        FixedOffset::west_opt(hours * 3600).unwrap()
+    }
+
+    impl<const REPEAT: bool> TimeZone for DstAtMidnight<REPEAT> {
+        type Offset = FixedOffset;
+        fn from_offset(_: &FixedOffset) -> Self {
+            Self
+        }
+        fn offset_from_local_date(&self, _: &NaiveDate) -> LocalResult<FixedOffset> {
+            LocalResult::None
+        }
+        fn offset_from_local_datetime(&self, local: &NaiveDateTime) -> LocalResult<FixedOffset> {
+            let before = local.date() < DST_DAY;
+            match (REPEAT, local.date() == DST_DAY && local.hour() == 0) {
+                (false, true) => LocalResult::None,
+                (true, true) => LocalResult::Ambiguous(west(2), west(3)),
+                (false, false) => LocalResult::Single(west(if before { 3 } else { 2 })),
+                (true, false) => LocalResult::Single(west(if before { 2 } else { 3 })),
+            }
+        }
+        fn offset_from_utc_date(&self, _: &NaiveDate) -> FixedOffset {
+            west(3)
+        }
+        fn offset_from_utc_datetime(&self, _: &NaiveDateTime) -> FixedOffset {
+            west(3)
+        }
+    }
+
+    fn utc(s: &str) -> i64 {
+        DateTime::parse_from_rfc3339(s).unwrap().timestamp()
+    }
+
+    #[test]
+    fn a_day_starts_at_local_midnight() {
+        let d = NaiveDate::from_ymd_opt(2026, 10, 21).unwrap();
+        assert_eq!(
+            day_start(&DstAtMidnight::<false>, d),
+            utc("2026-10-21T03:00:00Z")
+        );
+    }
+
+    #[test]
+    fn a_day_whose_midnight_is_skipped_starts_at_one() {
+        assert_eq!(
+            day_start(&DstAtMidnight::<false>, DST_DAY),
+            utc("2026-11-01T03:00:00Z")
+        );
+    }
+
+    #[test]
+    fn a_day_whose_midnight_repeats_starts_at_the_first_one() {
+        assert_eq!(
+            day_start(&DstAtMidnight::<true>, DST_DAY),
+            utc("2026-11-01T02:00:00Z")
+        );
     }
 
     #[test]
@@ -701,7 +800,7 @@ mod tests {
     fn a_complete_row_is_not_replaced_by_an_incomplete_one() {
         let done = line("m1", "r1", T0, "x", &usage(10, 0, 0, 7), Some("end_turn"));
         let stale = line("m1", "r1", T0, "x", &usage(10, 0, 0, 0), None);
-        let p = temp_file("order.jsonl", &format!("{done}\n{stale}\n"));
+        let p = temp_file("order.jsonl", format!("{done}\n{stale}\n"));
         let (recs, _) = scan_file(&p, 0, 0).unwrap();
         assert_eq!(recs.len(), 1);
         assert_eq!(recs[0].o, 7);
