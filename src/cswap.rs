@@ -4,7 +4,8 @@
 
 use crate::i18n::l;
 use crate::setup::{self, Tool};
-use serde::Deserialize;
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Deserializer};
 
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -43,13 +44,13 @@ pub struct Spend {
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Usage {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient")]
     pub five_hour: Option<Window>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient")]
     pub seven_day: Option<Window>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient_vec")]
     pub scoped: Vec<Window>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient")]
     pub spend: Option<Spend>,
 }
 
@@ -68,12 +69,12 @@ pub struct Account {
     pub disabled: bool,
     #[serde(default)]
     pub usage_status: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient")]
     pub usage: Option<Usage>,
     #[serde(default)]
     pub usage_age_seconds: Option<f64>,
     /// cswap's last successful reading, kept while fresh fetches fail (e.g. HTTP 429).
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient")]
     pub last_good_usage: Option<Usage>,
     #[serde(default)]
     pub last_good_age_seconds: Option<f64>,
@@ -152,12 +153,38 @@ impl Account {
 pub struct AccountList {
     #[serde(default)]
     pub active_account_number: Option<u32>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient_vec")]
     pub accounts: Vec<Account>,
     /// "Account-1 and Account-2 hold the same credential (…)": one slot's login was
     /// overwritten with another account's.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient_vec")]
     pub duplicate_account_warnings: Vec<String>,
+}
+
+/// A field of `cswap list` that doesn't have the expected shape (a `null` pct, a
+/// missing email, a new cswap's change) reads as absent instead of failing the
+/// whole list, so the other accounts still show.
+fn lenient<'de, D: Deserializer<'de>, T: DeserializeOwned>(d: D) -> Result<Option<T>, D::Error> {
+    Ok(from_value_or_log(serde_json::Value::deserialize(d)?))
+}
+
+/// `lenient` per item: entries that don't fit are dropped, the rest kept.
+fn lenient_vec<'de, D: Deserializer<'de>, T: DeserializeOwned>(d: D) -> Result<Vec<T>, D::Error> {
+    let items = Option::<Vec<serde_json::Value>>::deserialize(d)?.unwrap_or_default();
+    Ok(items.into_iter().filter_map(from_value_or_log).collect())
+}
+
+fn from_value_or_log<T: DeserializeOwned>(v: serde_json::Value) -> Option<T> {
+    if v.is_null() {
+        return None;
+    }
+    serde_json::from_value(v)
+        .inspect_err(|e| {
+            if std::env::var("SWAPBAR_DEBUG").is_ok() {
+                eprintln!("skipping part of `cswap list`: {e}");
+            }
+        })
+        .ok()
 }
 
 impl AccountList {
@@ -485,6 +512,48 @@ mod tests {
         let c = &list.accounts[2];
         assert!(c.usage.is_none());
         assert_eq!(c.usage_status.as_deref(), Some("token expired"));
+    }
+
+    #[test]
+    fn a_malformed_account_does_not_hide_the_others() {
+        let list: AccountList = serde_json::from_str(
+            r#"{"activeAccountNumber": 4, "duplicateAccountWarnings": null, "accounts": [
+                {"number": 1, "email": "a@x.com"},
+                {"number": 2},
+                {"email": "c@x.com"},
+                {"number": 4, "email": "d@x.com", "active": true,
+                 "usage": {"fiveHour": {"pct": null}, "sevenDay": {"pct": 40.0}}}
+            ]}"#,
+        )
+        .unwrap();
+        let numbers: Vec<u32> = list.accounts.iter().map(|a| a.number).collect();
+        assert_eq!(numbers, [1, 4]);
+        assert!(list.duplicate_account_warnings.is_empty());
+        let u = list.accounts[1].usage.as_ref().unwrap();
+        assert!(u.five_hour.is_none(), "a window without pct is dropped");
+        assert_eq!(u.seven_day.as_ref().unwrap().pct, 40.0);
+    }
+
+    #[test]
+    fn a_malformed_usage_block_keeps_the_account() {
+        let list: AccountList = serde_json::from_str(
+            r#"{"accounts": [
+                {"number": 1, "email": "a@x.com", "usage": "n/a", "lastGoodUsage": 7},
+                {"number": 2, "email": "b@x.com", "usage": {
+                    "fiveHour": {"pct": "3"},
+                    "spend": {"used": null, "limit": 10, "pct": 0},
+                    "scoped": [{"pct": null, "name": "Opus"}, {"pct": 1.0, "name": "Fable"}]
+                }}
+            ]}"#,
+        )
+        .unwrap();
+        assert_eq!(list.accounts.len(), 2);
+        let a = &list.accounts[0];
+        assert!(a.usage.is_none() && a.last_good_usage.is_none());
+        let u = list.accounts[1].usage.as_ref().unwrap();
+        assert!(u.five_hour.is_none() && u.spend.is_none());
+        assert_eq!(u.scoped.len(), 1);
+        assert_eq!(u.scoped[0].name.as_deref(), Some("Fable"));
     }
 
     #[test]
