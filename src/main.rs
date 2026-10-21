@@ -222,7 +222,7 @@ fn main() {
                 }
             }));
             let prefs = state.read(cx).prefs.clone();
-            if prefs.notify_low || prefs.notify_reset {
+            if prefs.notify_low || prefs.notify_pace || prefs.notify_reset {
                 notify::request_authorization();
             }
             hotkey::set_handler(Box::new({

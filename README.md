@@ -27,10 +27,10 @@ Swapbar shows the 5h, 7d and per-model (Fable) quotas of every cswap account at 
 ## Features
 
 - **Setup assistant.** On first run Swapbar checks for Claude Code and claude-swap, installs claude-swap if it's missing (with `uv`, installing `uv` too if needed), and adds your accounts one by one: each signs in through `claude auth login` in the browser, cswap saves the login, and Claude Code switches back to the account it was using.
-- **All accounts, one glance. Each account shows its plan (Max 20x, Max 5x, Pro, Team Premium/Standard) and gets 5h, 7d and per-model (Fable) bars with time to reset. The bars turn yellow at 40% left and red at 15%.
+- **All accounts, one glance.** Each account shows its plan (Max 20x, Max 5x, Pro, Team Premium/Standard) and gets 5h, 7d and per-model (Fable) bars with time to reset. A bar turns red at the low-quota level (15% left by default) and yellow 25 points above it.
 - **One-click switching.** Click an inactive account to run `cswap switch`. The active account is marked **current**, and accounts left out of auto-rotation show as **paused**.
 - **Pace warnings.** A marker on a bar shows where an even pace would be when an account is using a window too fast, and the row says when the window would run out if that comes before its reset. A notification warns about the current account once per window.
-- **Switch suggestion. When the current account's tightest window drops to the low-quota level (15% left by default), a banner names the account with the most room and switches to it in one click. That account is also marked **suggested** in the list.
+- **Switch suggestion.** When the current account's tightest window drops to the low-quota level (15% left by default), a banner names the account with the most room and switches to it in one click. That account is also marked **suggested** in the list.
 - **Notifications.** A notification when the current account runs low, with a **Switch** button for the best other account, and another when a depleted account's quota resets.
 - **Global shortcuts.** `⌃⌥S` opens Swapbar from any app; `⌃⌥⇧S` switches to the account with the most quota left. No Accessibility permission needed.
 - **Update check.** Swapbar checks GitHub for a new release at launch and every 6 hours and shows a **Download** banner when one is out.

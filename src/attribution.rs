@@ -15,6 +15,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::i18n::l;
+
 /// Who a record's usage counts for.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub enum Owner {
@@ -29,7 +31,7 @@ pub enum Owner {
 impl Owner {
     pub fn label(&self) -> &str {
         match self {
-            Owner::Unknown => "unknown account",
+            Owner::Unknown => l("unknown account", "bilinmeyen hesap"),
             Owner::Account(_, e) | Owner::Email(e) => e,
         }
     }

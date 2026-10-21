@@ -17,6 +17,29 @@ const MIN_GAIN: f64 = 10.0;
 /// between two polls.
 const RESET_DROP: f64 = 30.0;
 
+/// A window turns from green to yellow this many points above the low-quota level.
+const WARN_MARGIN: f64 = 25.0;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Level {
+    Ok,
+    Warn,
+    Low,
+}
+
+/// Colour band for a window with `remaining` percent left: low at the low-quota level,
+/// so the bars agree with the suggestion and the notification.
+pub fn level(remaining: f64, prefs: &Prefs) -> Level {
+    let low = prefs.low_quota_pct as f64;
+    if remaining <= low {
+        Level::Low
+    } else if remaining <= low + WARN_MARGIN {
+        Level::Warn
+    } else {
+        Level::Ok
+    }
+}
+
 /// Percentage left in the account's tightest window (5h or 7d), or `None` without usage data.
 pub fn headroom(acc: &Account) -> Option<f64> {
     if acc.usage_status.as_deref().is_some_and(|s| s != "ok") {
@@ -274,6 +297,28 @@ mod tests {
             low_quota_pct: 15,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn default_level_bands_stay_at_15_and_40() {
+        let p = prefs();
+        assert_eq!(level(41.0, &p), Level::Ok);
+        assert_eq!(level(40.0, &p), Level::Warn);
+        assert_eq!(level(15.5, &p), Level::Warn);
+        assert_eq!(level(15.0, &p), Level::Low);
+        assert_eq!(level(0.0, &p), Level::Low);
+    }
+
+    #[test]
+    fn level_bands_follow_the_low_quota_setting() {
+        let p = Prefs {
+            low_quota_pct: 30,
+            ..prefs()
+        };
+        assert_eq!(level(30.0, &p), Level::Low);
+        assert_eq!(level(31.0, &p), Level::Warn);
+        assert_eq!(level(55.0, &p), Level::Warn);
+        assert_eq!(level(56.0, &p), Level::Ok);
     }
 
     #[test]

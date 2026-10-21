@@ -75,13 +75,11 @@ fn t() -> &'static T {
     }
 }
 
-fn remaining_color(remaining: f64) -> Hsla {
-    if remaining <= 15.0 {
-        c(t().danger)
-    } else if remaining <= 40.0 {
-        c(t().warn)
-    } else {
-        c(t().ok)
+fn remaining_color(remaining: f64, prefs: &Prefs) -> Hsla {
+    match advice::level(remaining, prefs) {
+        advice::Level::Low => c(t().danger),
+        advice::Level::Warn => c(t().warn),
+        advice::Level::Ok => c(t().ok),
     }
 }
 
@@ -193,7 +191,9 @@ fn quota_row(label: &str, w: Option<&UsageWindow>, prefs: &Prefs, pace: bool) ->
     } else {
         String::new()
     };
-    let color = remaining.map(remaining_color).unwrap_or(c(t().tertiary));
+    let color = remaining
+        .map(|r| remaining_color(r, prefs))
+        .unwrap_or(c(t().tertiary));
     // The bar always fills with the shown quantity so it reads the same way as the number.
     let fill = shown.unwrap_or(0.0) / 100.0;
     let bar_color = if mode == PercentMode::Used {
@@ -350,7 +350,7 @@ fn suggestion_banner(s: &Suggestion) -> impl IntoElement {
             s.email,
             s.headroom
         ),
-        l(l("Switch", "Geç"), "Geç"),
+        l("Switch", "Geç"),
         move |cx| crate::switch_account(cx, number),
     )
 }
@@ -367,7 +367,7 @@ fn update_banner(r: &Release) -> impl IntoElement {
             r.version
         ),
         lf!("You have {}", "Sizdeki sürüm {}", crate::APP_VERSION),
-        l(l("Download", "İndir"), "İndir"),
+        l("Download", "İndir"),
         move |cx| cx.open_url(&url),
     )
 }

@@ -614,7 +614,7 @@ fn page_notifications(s: &AppState) -> impl IntoElement {
         .child(group(vec![
             row(
                 l("Low quota at", "Düşük kota eşiği"),
-                Some(l("A window counts as low at this much left. Swapbar then suggests the account with the most room.", "Bir pencere bu kadar kalınca düşük sayılır. Swapbar o zaman en çok yeri olan hesabı önerir.")),
+                Some(l("A window counts as low at this much left: its bar turns red and Swapbar suggests the account with the most room.", "Bir pencere bu kadar kalınca düşük sayılır: çubuğu kırmızıya döner ve Swapbar en çok yeri olan hesabı önerir.")),
                 stepper("low-pct", format!("{}%", p.low_quota_pct), |d, cx| {
                     crate::update_prefs(cx, |p| p.low_quota_pct = (p.low_quota_pct as i64 + d * 5).clamp(5, 50) as u32)
                 }),
