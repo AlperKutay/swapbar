@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use chrono::{DateTime, Local, Utc};
+use chrono::{DateTime, Duration, Local, Utc};
 
 use crate::cswap::{Account, AccountList, Window};
 use crate::settings::Prefs;
@@ -146,6 +146,12 @@ pub enum Event {
         window: &'static str,
         left: f64,
     },
+    /// An account's saved login lapses in `left` (zero: already lapsed).
+    LoginExpiring {
+        number: u32,
+        email: String,
+        left: Duration,
+    },
 }
 
 /// Remembers the last used percentage per account and window, so each threshold
@@ -155,6 +161,8 @@ pub struct Watch {
     last: HashMap<(u32, &'static str), f64>,
     /// Windows already warned about, with their reset time in minutes (0 if unknown).
     paced: HashMap<(u32, &'static str), i64>,
+    /// Accounts already warned about an expiring login, with that `loginExpiresAt`.
+    login_warned: HashMap<u32, String>,
     primed: bool,
 }
 
@@ -170,6 +178,7 @@ impl Watch {
         let mut events = Vec::new();
         let mut next = HashMap::new();
         for acc in &list.accounts {
+            self.check_login(acc, now, prefs, &mut events);
             if acc.usage_status.as_deref().is_some_and(|s| s != "ok") {
                 // keep the old reading so a failed poll doesn't look like a reset later
                 for key in self.last.keys().filter(|k| k.0 == acc.number) {
@@ -217,6 +226,32 @@ impl Watch {
         self.last = next;
         self.primed = true;
         events
+    }
+
+    /// One `LoginExpiring` event per login: a fresh sign-in brings a new expiry date.
+    /// Unlike quota, a login that is already about to lapse at launch is worth saying.
+    fn check_login(
+        &mut self,
+        acc: &Account,
+        now: DateTime<Utc>,
+        prefs: &Prefs,
+        events: &mut Vec<Event>,
+    ) {
+        let Some(left) = acc.login_expires_in(now) else {
+            return;
+        };
+        let expiry = acc.login_expires_at.clone().unwrap_or_default();
+        if self.login_warned.get(&acc.number) == Some(&expiry) {
+            return;
+        }
+        self.login_warned.insert(acc.number, expiry);
+        if prefs.notify_login && !prefs.is_hidden(acc.number) {
+            events.push(Event::LoginExpiring {
+                number: acc.number,
+                email: acc.email.clone(),
+                left,
+            });
+        }
     }
 
     /// One `Pace` event per window cycle; while priming, only remember the window.
@@ -606,5 +641,64 @@ mod tests {
             ..prefs()
         };
         assert!(w.update_at(&hot, &off, now).is_empty());
+    }
+
+    fn expiring(number: u32, at: &str) -> Account {
+        Account {
+            login_expires_at: Some(at.into()),
+            ..acc(number, false, 10.0, None)
+        }
+    }
+
+    fn login_events(events: &[Event]) -> Vec<(u32, i64)> {
+        events
+            .iter()
+            .filter_map(|e| match e {
+                Event::LoginExpiring { number, left, .. } => Some((*number, left.num_hours())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn warns_once_per_expiring_login() {
+        let now = at("2026-10-21T12:00:00Z");
+        let mut w = Watch::default();
+        let soon = list(vec![
+            expiring(1, "2026-10-23T12:00:00Z"),
+            expiring(2, "2026-11-30T12:00:00Z"),
+            acc(3, true, 10.0, None),
+        ]);
+        assert_eq!(
+            login_events(&w.update_at(&soon, &prefs(), now)),
+            [(1, 48)],
+            "already close at launch is worth saying; far off is not"
+        );
+        assert!(login_events(&w.update_at(&soon, &prefs(), now)).is_empty());
+
+        // signing in again moves the date out; a later expiry warns again in its turn
+        let renewed = list(vec![expiring(1, "2026-11-20T12:00:00Z")]);
+        assert!(login_events(&w.update_at(&renewed, &prefs(), now)).is_empty());
+        let later = at("2026-11-19T12:00:00Z");
+        assert_eq!(
+            login_events(&w.update_at(&renewed, &prefs(), later)),
+            [(1, 24)]
+        );
+    }
+
+    #[test]
+    fn login_warnings_follow_the_settings() {
+        let now = at("2026-10-21T12:00:00Z");
+        let soon = list(vec![expiring(1, "2026-10-22T12:00:00Z")]);
+        let off = Prefs {
+            notify_login: false,
+            ..prefs()
+        };
+        assert!(login_events(&Watch::default().update_at(&soon, &off, now)).is_empty());
+        let hidden = Prefs {
+            hidden_accounts: vec![1],
+            ..prefs()
+        };
+        assert!(login_events(&Watch::default().update_at(&soon, &hidden, now)).is_empty());
     }
 }

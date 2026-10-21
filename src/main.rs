@@ -56,6 +56,9 @@ pub struct AppState {
     pub update_checking: bool,
     /// Result of the last check the user started from Settings.
     pub update_message: Option<String>,
+    /// A newer claude-swap on PyPI, once an update check has found one.
+    pub cswap_update: Option<update::CswapUpdate>,
+    pub cswap_upgrading: bool,
 }
 
 impl AppState {
@@ -78,6 +81,8 @@ impl AppState {
             update: None,
             update_checking: false,
             update_message: None,
+            cswap_update: None,
+            cswap_upgrading: false,
         }
     }
 
@@ -222,7 +227,7 @@ fn main() {
                 }
             }));
             let prefs = state.read(cx).prefs.clone();
-            if prefs.notify_low || prefs.notify_pace || prefs.notify_reset {
+            if prefs.notify_low || prefs.notify_pace || prefs.notify_reset || prefs.notify_login {
                 notify::request_authorization();
             }
             hotkey::set_handler(Box::new({
@@ -553,6 +558,35 @@ fn notify_quota_changes(cx: &mut App) {
                     (!active).then_some(number),
                 );
             }
+            advice::Event::LoginExpiring {
+                number,
+                email,
+                left,
+            } => {
+                let (title, body) = if left.is_zero() {
+                    (
+                        lf!("{email} is signed out", "{email} oturumu kapandı"),
+                        l(
+                            "Its saved login has expired. Open Swapbar › Settings › Accounts and choose Sign in again.",
+                            "Kayıtlı girişinin süresi doldu. Swapbar › Ayarlar › Hesaplar'da Yeniden giriş yap'ı seç.",
+                        )
+                        .to_string(),
+                    )
+                } else {
+                    let when = cswap::expires_in_text(left);
+                    (
+                        lf!(
+                            "Sign in to {email} again soon",
+                            "{email} için yakında yeniden giriş gerekecek"
+                        ),
+                        lf!(
+                            "Its saved login expires {when}. Sign in again from the popover or Settings › Accounts so it keeps working.",
+                            "Kayıtlı girişi {when} sona eriyor. Hesap çalışmaya devam etsin diye popover'dan ya da Ayarlar › Hesaplar'dan yeniden giriş yap."
+                        ),
+                    )
+                };
+                notify::post(&format!("login-{number}"), &title, &body, None);
+            }
         }
     }
 }
@@ -588,12 +622,16 @@ pub fn check_for_updates(cx: &mut App, manual: bool) {
         cx.notify();
     });
     cx.spawn(async move |cx: &mut AsyncApp| {
-        let result = cx
+        let (result, cswap_result) = cx
             .background_executor()
-            .spawn(async { update::check(APP_VERSION) })
+            .spawn(async { (update::check(APP_VERSION), check_cswap()) })
             .await;
         let _ = state.update(cx, |s, cx| {
             s.update_checking = false;
+            match cswap_result {
+                Ok(found) => s.cswap_update = found,
+                Err(e) => debug_log(format_args!("claude-swap update check failed: {e}")),
+            }
             match result {
                 Ok(found) => {
                     if manual {
@@ -621,6 +659,53 @@ pub fn check_for_updates(cx: &mut App, manual: bool) {
             }
             cx.notify();
         });
+    })
+    .detach();
+}
+
+/// A newer claude-swap than the installed one. Nothing to offer without cswap.
+fn check_cswap() -> Result<Option<update::CswapUpdate>, String> {
+    let Some(installed) = setup::find(setup::Tool::Cswap).and_then(|p| setup::cswap_version(&p))
+    else {
+        return Ok(None);
+    };
+    update::check_cswap(&installed)
+}
+
+/// Run `cswap upgrade`, then reload the account list with the new cswap.
+pub fn upgrade_cswap(cx: &mut App) {
+    let state = cx.global::<Globals>().state.clone();
+    if state.read(cx).cswap_upgrading {
+        return;
+    }
+    state.update(cx, |s, cx| {
+        s.cswap_upgrading = true;
+        cx.notify();
+    });
+    cx.spawn(async move |cx: &mut AsyncApp| {
+        let result = cx
+            .background_executor()
+            // the upgrade worked even if PyPI can't be asked again right now
+            .spawn(async { cswap::upgrade().map(|()| check_cswap().ok().flatten()) })
+            .await;
+        let ok = result.is_ok();
+        let _ = state.update(cx, |s, cx| {
+            s.cswap_upgrading = false;
+            match result {
+                Ok(still_newer) => s.cswap_update = still_newer,
+                Err(e) => {
+                    s.accounts_error = Some(lf!(
+                        "Could not update claude-swap: {e}",
+                        "claude-swap güncellenemedi: {e}"
+                    ))
+                }
+            }
+            cx.notify();
+        });
+        // a reload would clear the error before anyone read it
+        if ok {
+            let _ = cx.update(refresh_accounts);
+        }
     })
     .detach();
 }

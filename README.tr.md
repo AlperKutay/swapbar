@@ -31,9 +31,10 @@ Swapbar tüm cswap hesaplarının 5h, 7d ve model bazlı (Fable) kotalarını te
 - **Tek tıkla geçiş.** Pasif bir hesaba tıklamak `cswap switch` çalıştırır. Aktif hesap **current**, otomatik rotasyon dışındaki hesaplar **paused** olarak işaretlenir.
 - **Tempo uyarıları.** Bir hesap bir pencereyi çok hızlı harcıyorsa, çubuktaki işaret eşit tempoda nerede olması gerektiğini gösterir; pencere sıfırlanmadan bitecekse satır ne zaman biteceğini söyler. Aktif hesap için pencere başına bir bildirim gelir.
 - **Geçiş önerisi.** Aktif hesabın en dar penceresi düşük kota seviyesine (varsayılan %15 kalan) inince, en çok kotası kalan hesabı gösteren bir banner çıkar ve tek tıkla o hesaba geçilir. Bu hesap listede **suggested** olarak işaretlenir.
-- **Bildirimler.** Aktif hesabın kotası azalınca en uygun hesaba geçmek için **Switch** butonlu bir bildirim, tükenmiş bir hesabın kotası sıfırlanınca da ayrı bir bildirim gelir.
+- **Bildirimler.** Aktif hesabın kotası azalınca en uygun hesaba geçmek için **Switch** butonlu bir bildirim, tükenmiş bir hesabın kotası sıfırlanınca ayrı bir bildirim, bir hesabın kayıtlı girişinin süresi dolmadan 3 gün önce de bir uyarı gelir (claude-swap 0.27+); hesabın satırında **Yeniden giriş yap** çıkar.
+- **Kullanım neden yok.** cswap bir hesabın kullanımını alamayınca satır nedenini ve ne zaman yeniden deneyeceğini söyler: "kullanım alınamadı: istek sınırı · yeniden deneme 14:32" (claude-swap 0.27+).
 - **Global kısayollar.** `⌃⌥S` her uygulamadan Swapbar'ı açar; `⌃⌥⇧S` en çok kotası kalan hesaba geçer. Erişilebilirlik izni gerekmez.
-- **Güncelleme kontrolü.** Swapbar açılışta ve 6 saatte bir GitHub'da yeni sürüm arar; yeni sürüm varsa **Download** banner'ı gösterir.
+- **Güncelleme kontrolü.** Swapbar açılışta ve 6 saatte bir GitHub'da yeni sürüm arar; yeni sürüm varsa **Download** banner'ı gösterir. PyPI'da yeni bir claude-swap sürümü de arar; **Güncelle** `cswap upgrade` çalıştırır.
 - **Menü çubuğunda kota.** Swapbar ikonunun yanında aktif hesabın kotası `5h` ya da `5h · 7d` olarak, kalan veya kullanılan şeklinde görünür.
 - **Token ve maliyet özeti.** Bugün ve son 30 gün için maliyet, token, istek, output ve cache read toplamları, hesap bazında (cswap'ın geçiş log'u, `cswap run` oturumları ve her profilin giriş yaptığı hesaptan çıkarılır) ve model bazlı maliyet dökümü ve input / cache read / cache write / output dağılım çubuğu.
 - **Türkçe ve İngilizce.** macOS dilini izler; Ayarlar › Genel'den biri seçilebilir.

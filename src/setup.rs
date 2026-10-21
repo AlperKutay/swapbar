@@ -87,13 +87,16 @@ pub struct Tools {
     pub brew: Option<PathBuf>,
 }
 
+/// `cswap --version` of the binary at `path`, e.g. "0.26.0".
+pub fn cswap_version(path: &Path) -> Option<String> {
+    let out = command(path).arg("--version").output().ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    text.split_whitespace().last().map(str::to_string)
+}
+
 pub fn detect() -> Tools {
     let cswap = find(Tool::Cswap);
-    let cswap_version = cswap.as_ref().and_then(|p| {
-        let out = command(p).arg("--version").output().ok()?;
-        let text = String::from_utf8_lossy(&out.stdout);
-        text.split_whitespace().last().map(str::to_string)
-    });
+    let cswap_version = cswap.as_deref().and_then(cswap_version);
     Tools {
         claude: find(Tool::Claude),
         cswap,
