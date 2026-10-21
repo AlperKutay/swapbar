@@ -3,6 +3,27 @@
 All notable changes to Swapbar. The website shows the same notes at
 [swapbar.afat.me/changelog](https://swapbar.afat.me/changelog).
 
+## 0.4.0
+
+### Added
+
+- **Login expiry warning.** Three days before an account's saved login expires, its row says "login expires in 2 days · Sign in again", and the link opens the sign-in flow. Settings › Accounts shows the same line, and a notification warns once per login. Turn the notification off in Settings › Notifications. Needs claude-swap 0.27 or later.
+- **Why usage is missing.** When cswap can't fetch an account's usage, the row now says why and when it tries again: "couldn't fetch usage: rate limited · retrying at 14:32". Needs claude-swap 0.27 or later; older versions still show "couldn't fetch usage".
+- **claude-swap updates.** The update check also looks for a newer claude-swap on PyPI. When there is one, the popover and Settings › General offer **Update**, which runs `cswap upgrade`. Pre-releases are never offered.
+
+### Changed
+
+- **Bar colours follow the low-quota level.** A bar turns red at the level set in Settings › Notifications › Low quota at, and yellow 25 points above it. Before, the bars turned red at 15% and yellow at 40% whatever the setting, so a bar could stay green while the banner and the notification already called the account low. The default 15% keeps the old 15 / 40 split.
+
+### Fixed
+
+- One malformed entry in `cswap list --json`, such as a `null` percentage in one window, hid every account behind "couldn't read `cswap list` output". Only the part that doesn't fit is left out now, and the other accounts still show.
+- The token and cost summary could miscount. One invalid byte in a transcript left that whole file out and had it re-read on every refresh. Transcript lines over 512 KB, such as a reply that writes a large file, were skipped. In time zones where a DST change skips or repeats midnight, Today, 7 days and 30 days all counted the full 31 days.
+- At launch, notification permission is now also requested when only the pace warning is on.
+- "unknown account" in the cost list is translated.
+
+Thanks to [@musabustun](https://github.com/musabustun) for the colour, cost summary and `cswap list` fixes.
+
 ## 0.3.0
 
 ### Added
