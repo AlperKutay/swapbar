@@ -521,9 +521,6 @@ fn account_row(
                 div()
                     .text_size(px(10.5))
                     .text_color(c(t().warn))
-                    .whitespace_nowrap()
-                    .overflow_hidden()
-                    .text_ellipsis()
                     .child(text),
             );
         }
