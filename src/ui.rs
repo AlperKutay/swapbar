@@ -190,8 +190,12 @@ fn quota_row(
     let marker = pace_marker(w, mode).filter(|_| pace);
     let remaining = w.map(|w| (100.0 - w.pct).clamp(0.0, 100.0));
     let shown = w.map(|w| mode.value(w.pct));
+    // beside an amount there is room for the countdown only
+    let clock = w
+        .and_then(|w| w.clock.as_ref())
+        .filter(|_| amount.is_none());
     let reset = if prefs.show_reset_times {
-        w.and_then(|w| match (&w.countdown, &w.clock) {
+        w.and_then(|w| match (&w.countdown, clock) {
             (Some(cd), Some(clock)) => Some(format!(
                 "{} · {}",
                 crate::i18n::time(cd),
