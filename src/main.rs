@@ -849,10 +849,14 @@ pub fn update_title(cx: &mut App) {
             let d7 = u
                 .and_then(|u| u.seven_day.as_ref())
                 .map(|w| format!("{:.0}%", mode.value(w.pct)));
+            // a seat billed by usage shows its spend limit, as `cswap menubar` does
+            let spend = u
+                .and_then(|u| u.spend_only())
+                .map(|s| format!(" $ {:.0}%", mode.value(s.pct)));
             match (tm, h5, d7) {
                 (TitleMode::Both, Some(a), Some(b)) => format!(" {a}·{b}"),
                 (_, Some(a), _) => format!(" {a}"),
-                _ => String::new(),
+                _ => spend.unwrap_or_default(),
             }
         }
     };
@@ -864,9 +868,12 @@ pub fn update_title(cx: &mut App) {
             None => APP_NAME.to_string(),
             Some(acc) => {
                 let u = acc.usage.as_ref();
+                let spend = u.and_then(|u| u.spend.as_ref());
+                let spend_window = spend.map(|s| s.window());
                 let parts: Vec<String> = [
                     ("5h", u.and_then(|u| u.five_hour.as_ref())),
                     ("7d", u.and_then(|u| u.seven_day.as_ref())),
+                    (spend.map_or("", |s| s.currency()), spend_window.as_ref()),
                 ]
                 .into_iter()
                 .filter_map(|(name, w)| {
@@ -874,16 +881,14 @@ pub fn update_title(cx: &mut App) {
                     Some(lf!("{name} {v:.0}%", "{name} %{v:.0}"))
                 })
                 .collect();
-                if parts.is_empty() {
-                    format!("{APP_NAME} · {}", acc.name())
-                } else {
-                    format!(
-                        "{APP_NAME} · {}\n{} {}",
-                        acc.name(),
-                        parts.join(" · "),
-                        mode.suffix()
-                    )
+                let mut tip = format!("{APP_NAME} · {}", acc.name());
+                if !parts.is_empty() {
+                    tip.push_str(&format!("\n{} {}", parts.join(" · "), mode.suffix()));
                 }
+                if let Some(s) = spend {
+                    tip.push_str(&format!("\n{}", s.amounts()));
+                }
+                tip
             }
         };
         g.status.set_tooltip(&tip);
