@@ -3,6 +3,14 @@
 All notable changes to Swapbar. The website shows the same notes at
 [swapbar.afat.me/changelog](https://swapbar.afat.me/changelog).
 
+## 0.4.1
+
+### Fixed
+
+- The pace warning under an account row was cut off with an ellipsis when it didn't fit, which in Turkish hid the time the quota runs out. It wraps onto a second line now.
+
+Thanks to [@hozdemir](https://github.com/hozdemir) for the fix.
+
 ## 0.4.0
 
 ### Added
