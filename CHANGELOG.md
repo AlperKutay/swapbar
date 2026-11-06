@@ -13,6 +13,7 @@ All notable changes to Swapbar. The website shows the same notes at
 ### Fixed
 
 - **Update claude-swap on Windows.** `cswap upgrade` only prints the uv command on Windows, so the **Update** button failed. Swapbar now runs `uv tool upgrade claude-swap` itself there.
+- **A large transparent window on Windows.** After sleep, a monitor turning off or a game changing the display mode, an empty see-through window could appear, and closing it with Alt+F4 quit Swapbar. It was the hidden window that keeps Swapbar running in the tray; it now stays hidden and ignores Alt+F4.
 
 ## 0.4.1
 
