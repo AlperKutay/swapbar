@@ -10,6 +10,12 @@ All notable changes to Swapbar. The website shows the same notes at
 - **Windows.** Swapbar runs on Windows 10 and 11 as a system tray app, from the same code: the popover, Settings, the setup assistant, account management, notifications, global shortcuts (`Ctrl+Alt+S`, `Ctrl+Alt+Shift+S`) and launch at login. The tray icon shows the active account's 5h percentage in place of the logo, with both windows in its tooltip, and a right-click menu opens Settings or quits. Notifications have no **Switch** button yet; clicking one opens Swapbar. Releases include `Swapbar-windows-x64.zip`.
 - **Spend limits.** Accounts with a monthly spend limit (Anthropic's extra usage) get a **USD** row with what's spent, the limit and when it resets: "$13.50 / $50.00 · 5d 7h". Seats billed by usage alone, such as some Enterprise seats, have no 5h or 7d window; for them the spend limit is the quota. It colours the bar, decides the switch suggestion and the shortcut's pick, sends the low-quota and reset notifications, and shows in the menu bar or tray icon. Beside a plan's 5h and 7d windows it stays informational, as in cswap.
 - **Automatic switching.** Turn on Settings › Auto-switch › **Switch automatically** and Swapbar runs a `cswap auto` round with every account refresh: when the active account reaches the threshold on that page, cswap switches to another one, by the strategy set there, and a notification says which. Before, switching only happened while `cswap auto` or cswap's macOS menu bar service ran, and there was no such service on Windows. Off by default.
+- **A switch point per account.** Settings › Accounts gives each account in auto-rotation its own **Switch at** value, which replaces the Auto-switch threshold for that account only (`cswap threshold`, in claude-swap 1.0). **Use default** puts it back on the global one.
+- **Type a value.** Click the number in a stepper on the Auto-switch page, or an account's switch point, to type any value, such as 97.5.
+
+### Changed
+
+- The auto-switch threshold steps by 1 instead of 5 and goes up to 99.9%, the most cswap takes. Steps of 5 left values like 96 to 98 out of reach.
 
 ### Fixed
 
